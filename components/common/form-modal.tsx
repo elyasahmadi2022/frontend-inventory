@@ -19,6 +19,7 @@ type FormModalProps = {
   submittingLabel?: string;
   panelClassName?: string;
   contentClassName?: string;
+  footerContent?: ReactNode;
 };
 
 export function FormModal({
@@ -35,6 +36,7 @@ export function FormModal({
   submittingLabel = "Saving",
   panelClassName,
   contentClassName,
+  footerContent,
 }: FormModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -108,30 +110,33 @@ export function FormModal({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-light-border bg-light-bg/50 px-5 py-4 dark:border-dark-border dark:bg-dark-bg/40 sm:px-6">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={onClose}
-            className="inline-flex min-h-10 items-center justify-center border border-light-border bg-light-surface px-4 py-2 text-sm font-semibold text-light-text transition hover:border-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-border dark:bg-dark-surface dark:text-dark-text"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={onSubmit}
-            className="inline-flex min-h-10 items-center justify-center gap-2 border border-primary-500/30 bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {submitting ? (
-              <>
-                <LoaderMini size={16} color="currentColor" />
-                <span>{submittingLabel}</span>
-              </>
-            ) : (
-              submitLabel
-            )}
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-light-border bg-light-bg/50 px-5 py-4 dark:border-dark-border dark:bg-dark-bg/40 sm:px-6">
+          {footerContent ? <div>{footerContent}</div> : <span />}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={onClose}
+              className="inline-flex min-h-10 items-center justify-center border border-light-border bg-light-surface px-4 py-2 text-sm font-semibold text-light-text transition hover:border-primary-500/40 disabled:cursor-not-allowed disabled:opacity-50 dark:border-dark-border dark:bg-dark-surface dark:text-dark-text"
+            >
+              {cancelLabel}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={onSubmit}
+              className="inline-flex min-h-10 items-center justify-center gap-2 border border-primary-500/30 bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? (
+                <>
+                  <LoaderMini size={16} color="currentColor" />
+                  <span>{submittingLabel}</span>
+                </>
+              ) : (
+                submitLabel
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

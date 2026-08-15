@@ -11,7 +11,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { Checkbox, Popover } from "radix-ui";
+import { Popover } from "radix-ui";
 import {
   baseControlClass,
   FieldFrame,
@@ -412,15 +412,16 @@ export function MultiSelectField({
                               selectOptionRowSelectedClass,
                           )}
                         >
-                          <Checkbox.Root
-                            checked={selected}
-                            tabIndex={-1}
-                            className={selectOptionCheckboxClass}
+                          <span
+                            aria-hidden="true"
+                            className={joinClasses(
+                              selectOptionCheckboxClass,
+                              selected &&
+                                "border-primary-500 bg-primary-500 text-white",
+                            )}
                           >
-                            <Checkbox.Indicator>
-                              <CheckIcon />
-                            </Checkbox.Indicator>
-                          </Checkbox.Root>
+                            {selected ? <CheckIcon /> : null}
+                          </span>
                           {option.icon ? (
                             <span
                               className={selectOptionIconClass}

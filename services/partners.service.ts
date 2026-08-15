@@ -78,6 +78,7 @@ export type RecordPartnerPaymentInput = {
   currencyCode: "AFN" | "USD" | "PKR";
   amount: number;
   accountId: string;
+  paymentExchangeRate?: number;
   paymentDate: string;
   notes?: string;
 };

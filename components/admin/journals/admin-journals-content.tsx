@@ -546,14 +546,26 @@ export function AdminJournalsContent() {
                       />
                     ) : (
                       <TonePill
-                        label={optionLabel(journal.sourceType)}
+                        label={t(
+                          `admin.reports.source.${
+                            journal.sourceType === "money_transfer"
+                              ? "moneyTransfer"
+                              : journal.sourceType === "inventory_adjustment"
+                                ? "inventoryAdjustment"
+                                : journal.sourceType === "opening_balance"
+                                  ? "openingBalance"
+                                  : journal.sourceType
+                          }` as never,
+                        )}
                         tone="info"
                       />
                     )}
                   </TableColumn>
                   <TableColumn>
                     <TonePill
-                      label={optionLabel(journal.status)}
+                      label={t(
+                        `admin.reports.status.${journal.status}` as never,
+                      )}
                       tone={
                         journal.status === "posted"
                           ? "success"

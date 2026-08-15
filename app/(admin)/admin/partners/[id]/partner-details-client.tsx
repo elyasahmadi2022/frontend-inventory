@@ -500,12 +500,14 @@ export function AdminPartnerDetailsContent({
         accounts={accountsQuery.data ?? []}
         open={salePaymentOpen}
         sale={outstandingSale ?? null}
+        sales={sales}
         onClose={() => setSalePaymentOpen(false)}
       />
       <AdminPurchasePaymentModal
         accounts={accountsQuery.data ?? []}
         open={purchasePaymentOpen}
         purchase={outstandingPurchase ?? null}
+        purchases={purchases}
         onClose={() => setPurchasePaymentOpen(false)}
       />
       <AdminDetailToolbar
