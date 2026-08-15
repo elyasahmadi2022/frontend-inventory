@@ -13,7 +13,12 @@ import { ApiError } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import {
   useAdminAccountsQuery,
+  useAdminInventoryLocationsQuery,
   useAdminPartnersQuery,
+  useAdminProductsQuery,
+  useAdminPurchaseVendorsQuery,
+  useAdminSaleAccountsQuery,
+  useAdminSaleCustomersQuery,
 } from "@/lib/query/hooks";
 import type { PartnerRow, PartnerType } from "@/services/partners.service";
 
@@ -42,6 +47,24 @@ export function AdminPartnersContent() {
       status === "active" ? true : status === "inactive" ? false : undefined,
   });
   const accountsQuery = useAdminAccountsQuery({ page: 1, limit: 100, isActive: true });
+  const customersQuery = useAdminSaleCustomersQuery();
+  const vendorsQuery = useAdminPurchaseVendorsQuery();
+  const productsQuery = useAdminProductsQuery({
+    page: 1,
+    limit: 100,
+    isActive: true,
+  });
+  const locationsQuery = useAdminInventoryLocationsQuery();
+  const tradeAccountsQuery = useAdminSaleAccountsQuery([
+    "sales_revenue",
+    "inventory",
+    "cost_of_goods_sold",
+    "expense",
+    "cash",
+    "bank",
+    "sarafi",
+    "daskhil",
+  ]);
 
   useEffect(() => {
     const error = partnersQuery.error;
@@ -169,11 +192,16 @@ export function AdminPartnersContent() {
         />
         <AdminPartnersTable
           accounts={accountsQuery.data ?? []}
+          customers={customersQuery.data ?? []}
           items={partners}
+          locations={locationsQuery.data ?? []}
           loading={partnersQuery.isLoading}
           pagination={toPaginationMeta(partnersQuery.data?.pagination)}
           refreshing={partnersQuery.isFetching || accountsQuery.isFetching}
+          products={productsQuery.data?.items ?? []}
           status={status}
+          tradeAccounts={tradeAccountsQuery.data ?? []}
+          vendors={vendorsQuery.data ?? []}
           onStatusChange={(nextStatus) => {
             setStatus(nextStatus);
             setPage(1);

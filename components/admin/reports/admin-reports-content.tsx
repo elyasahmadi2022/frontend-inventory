@@ -1,9 +1,10 @@
 "use client";
 
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminPageHeader, ExportButtonGroup } from "@/components/admin/admin-page-header";
 import { AdminKpiCard } from "@/components/admin/dashboard/dashboard-panel";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
 import { DatePickerField } from "@/components/common/date-picker-field";
+import { FormModal } from "@/components/common/form-modal";
 import { InputField } from "@/components/common/input-field";
 import Pagination from "@/components/common/pagination";
 import { SelectField } from "@/components/common/select-field";
@@ -19,6 +20,7 @@ import { toPaginationMeta } from "@/lib/admin/pagination-meta";
 import { ApiError } from "@/lib/api";
 import { getLocalDateString, toIsoDate } from "@/lib/date-format";
 import { useI18n } from "@/lib/i18n";
+import { useAuth } from "@/hooks/use-auth";
 import {
   useAdminAccountBalancesQuery,
   useAdminAccountLedgerQuery,
@@ -31,14 +33,19 @@ import {
   useAdminInventoryBalancesQuery,
   useAdminJournalReportQuery,
   useAdminMonthlyReportQuery,
+  useStoreSettingsQuery,
 } from "@/lib/query/hooks";
+import { APP_NAME } from "@/utils/constants";
 import type { CurrencyCode } from "@/services/accounts.service";
 import type {
+  AccountLedgerResult,
+  JournalEntryRow,
   JournalSourceType,
   JournalStatus,
   PartnerBalanceRow,
   StatementAccountRow,
 } from "@/services/reports-admin.service";
+import { fetchAccountLedger, fetchJournalReport } from "@/services/reports-admin.service";
 import { gooeyToast } from "goey-toast";
 import {
   BadgeDollarSign,
@@ -359,6 +366,30 @@ const monthlyCurrencyColors = [
   "#be123c",
 ];
 
+let monthlyReportFontPromise: Promise<string> | null = null;
+
+async function getMonthlyReportFont() {
+  if (!monthlyReportFontPromise) {
+    monthlyReportFontPromise = fetch("/fonts/NotoNaskhArabic-Regular.ttf")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Monthly report font is unavailable");
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = "";
+        for (let start = 0; start < bytes.length; start += 0x8000) {
+          binary += String.fromCharCode(
+            ...bytes.subarray(start, start + 0x8000),
+          );
+        }
+        return window.btoa(binary);
+      })
+      .catch((error) => {
+        monthlyReportFontPromise = null;
+        throw error;
+      });
+  }
+  return monthlyReportFontPromise;
+}
+
 function BaseCurrencyValue({
   value,
   currencyCode,
@@ -641,6 +672,7 @@ function CombinedStatementTable({
 
 export function AdminReportsContent() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const now = new Date();
   const [activeTab, setActiveTab] = useState<ReportTab>("monthly");
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -659,10 +691,23 @@ export function AdminReportsContent() {
     "all",
   );
   const [journalNumber, setJournalNumber] = useState("");
+  const [monthlyExportFormat, setMonthlyExportFormat] = useState<
+    "pdf" | "excel" | null
+  >(null);
+  const [isExportingMonthlyReport, setIsExportingMonthlyReport] =
+    useState(false);
+  const [ledgerExportFormat, setLedgerExportFormat] = useState<
+    "pdf" | "excel" | null
+  >(null);
+  const [ledgerExportData, setLedgerExportData] =
+    useState<AccountLedgerResult | null>(null);
+  const [isPreparingLedgerExport, setIsPreparingLedgerExport] = useState(false);
+  const [isExportingLedgerReport, setIsExportingLedgerReport] = useState(false);
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerPageSize, setLedgerPageSize] = useState(10);
   const accountsQuery = useAdminAccountsQuery({ isActive: true, limit: 100 });
   const currenciesQuery = useAdminCurrenciesQuery();
+  const storeSettingsQuery = useStoreSettingsQuery();
   const accountBalancesQuery = useAdminAccountBalancesQuery();
   const firstAccountId =
     accountsQuery.data?.[0]?.id ??
@@ -716,6 +761,14 @@ export function AdminReportsContent() {
   const inventoryBalancesQuery = useAdminInventoryBalancesQuery();
   const baseCurrency =
     currenciesQuery.data?.find((currency) => currency.isBase)?.code ?? "AFN";
+  const reportSystemName = storeSettingsQuery.data?.storeName || APP_NAME;
+  const reportPreparedBy =
+    user?.fullName ??
+    user?.full_name ??
+    user?.name ??
+    user?.username ??
+    user?.email ??
+    "-";
 
   useEffect(() => {
     const error =
@@ -824,6 +877,11 @@ export function AdminReportsContent() {
   );
   const tabs = useMemo(
     () => [
+      {
+        id: "journal",
+        label: t("admin.reports.tabs.journal"),
+        icon: <ReceiptText className="size-4" />,
+      },
       {
         id: "monthly",
         label: t("admin.reports.monthly.title"),
@@ -1006,6 +1064,669 @@ export function AdminReportsContent() {
     ],
     [monthlyChartData],
   );
+  const monthlyExportRows = useMemo(
+    () =>
+      monthlyChartData.map((entry) => ({
+        metric: entry.name,
+        values: Object.fromEntries(
+          monthlyChartCurrencies.map((currencyCode) => [
+            currencyCode,
+            Number(entry.values[currencyCode] ?? 0),
+          ]),
+        ),
+      })),
+    [monthlyChartCurrencies, monthlyChartData],
+  );
+  const ledgerExportGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      NonNullable<typeof ledgerExportData>["items"]
+    >();
+    (ledgerExportData?.items ?? []).forEach((line) => {
+      const currency = line.currencyCode ?? baseCurrency;
+      groups.set(currency, [...(groups.get(currency) ?? []), line]);
+    });
+    return [...groups.entries()];
+  }, [baseCurrency, ledgerExportData]);
+
+  const prepareLedgerExport = async (format: "pdf" | "excel") => {
+    if (!selectedLedgerAccountId) return;
+    setIsPreparingLedgerExport(true);
+    try {
+      const params = {
+        accountId: selectedLedgerAccountId,
+        from: fromDate,
+        to: toDate,
+        page: 1,
+        limit: 100,
+      };
+      const data = await fetchAccountLedger(params);
+      const allItems = [...data.items];
+      for (
+        let page = 2;
+        data.pagination?.hasNextPage && page <= data.pagination.totalPages;
+        page += 1
+      ) {
+        const nextPage = await fetchAccountLedger({ ...params, page });
+        allItems.push(...nextPage.items);
+      }
+      setLedgerExportData({ ...data, items: allItems });
+      setLedgerExportFormat(format);
+    } catch {
+      gooeyToast.error(t("admin.reports.monthly.exportFailed"));
+    } finally {
+      setIsPreparingLedgerExport(false);
+    }
+  };
+
+  const downloadLedgerReport = async () => {
+    if (!ledgerExportFormat || !ledgerExportData) return;
+    setIsExportingLedgerReport(true);
+    const headers = [
+      t("admin.reports.column.date"),
+      t("admin.reports.column.journal"),
+      t("admin.reports.column.description"),
+      t("admin.reports.column.partner"),
+      t("admin.reports.column.debit"),
+      t("admin.reports.column.credit"),
+      t("admin.reports.column.balance"),
+    ];
+    const fileName = `ledger-${ledgerExportData.account?.code ?? "report"}-${fromDate}-${toDate}`;
+    try {
+      let blob: Blob;
+      let extension: "pdf" | "xlsx";
+      if (ledgerExportFormat === "excel") {
+        const XLSX = await import("xlsx");
+        const workbook = XLSX.utils.book_new();
+        ledgerExportGroups.forEach(([currency, lines]) => {
+          const rows = lines.map((line) => [
+            dateLabel(line.journalEntry?.entryDate),
+            line.journalEntry?.number ?? "-",
+            line.journalEntry?.description ?? line.memo ?? "-",
+            line.partner?.name ?? "-",
+            Number(line.debit ?? 0),
+            Number(line.credit ?? 0),
+            Number(line.runningBalance ?? 0),
+          ]);
+          const sheet = XLSX.utils.aoa_to_sheet([
+            [reportSystemName],
+            [t("admin.reports.tabs.ledger")],
+            [`${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}`],
+            [
+              `${t("admin.reports.export.filters")}: ${ledgerExportData.account?.code ?? "-"} | ${fromDate} — ${toDate} | ${currency}`,
+            ],
+            [],
+            headers,
+            ...rows,
+          ]);
+          sheet["!cols"] = [
+            { wch: 14 },
+            { wch: 16 },
+            { wch: 36 },
+            { wch: 22 },
+            { wch: 14 },
+            { wch: 14 },
+            { wch: 16 },
+          ];
+          XLSX.utils.book_append_sheet(workbook, sheet, currency.slice(0, 31));
+        });
+        blob = new Blob(
+          [XLSX.write(workbook, { bookType: "xlsx", type: "array" })],
+          {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+        );
+        extension = "xlsx";
+      } else {
+        const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+          import("jspdf"),
+          import("html2canvas"),
+        ]);
+        const document = new jsPDF({ orientation: "landscape" });
+        const fontData = await getMonthlyReportFont();
+        document.addFileToVFS("NotoNaskhArabic.ttf", fontData);
+        document.addFont("NotoNaskhArabic.ttf", "NotoNaskhArabic", "normal");
+        for (const [index, [currency, lines]] of ledgerExportGroups.entries()) {
+          if (index) document.addPage();
+          const header = window.document.createElement("div");
+          header.dir = window.document.documentElement.dir;
+          header.style.cssText =
+            "position:fixed;left:-10000px;top:0;width:1200px;padding:24px;background:#ffffff;color:#182230;font-family:var(--font-locale),sans-serif;";
+          [
+            [reportSystemName, "24px"],
+            [
+              `${t("admin.reports.tabs.ledger")} — ${ledgerExportData.account?.code ?? "-"} (${currency})`,
+              "18px",
+            ],
+            [
+              `${t("admin.reports.export.preparedBy")}: ${reportPreparedBy} | ${t("admin.reports.export.filters")}: ${fromDate} — ${toDate}`,
+              "14px",
+            ],
+          ].forEach(([text, fontSize]) => {
+            const line = window.document.createElement("p");
+            line.textContent = text;
+            line.style.cssText = `margin:0 0 6px;font-size:${fontSize};`;
+            header.appendChild(line);
+          });
+          window.document.body.appendChild(header);
+          const headerCanvas = await html2canvas(header, {
+            backgroundColor: "#ffffff",
+            scale: 2,
+          });
+          header.remove();
+          document.addImage(
+            headerCanvas.toDataURL("image/png"),
+            "PNG",
+            14,
+            10,
+            269,
+            (headerCanvas.height / headerCanvas.width) * 269,
+          );
+          for (let start = 0; start < lines.length; start += 24) {
+            if (start) document.addPage();
+            const table = window.document.createElement("table");
+            table.dir = window.document.documentElement.dir;
+            table.style.cssText =
+              "position:fixed;left:-10000px;top:0;width:1200px;border-collapse:collapse;background:#fff;color:#182230;font:14px var(--font-locale),sans-serif;";
+            const head = table.insertRow();
+            headers.forEach((label) => {
+              const cell = window.document.createElement("th");
+              cell.textContent = label;
+              cell.style.cssText =
+                "padding:8px;border:1px solid #cbd5e1;background:#0066ff;color:white;text-align:start;";
+              head.appendChild(cell);
+            });
+            lines.slice(start, start + 24).forEach((line) => {
+              const row = table.insertRow();
+              [
+                dateLabel(line.journalEntry?.entryDate),
+                line.journalEntry?.number ?? "-",
+                line.journalEntry?.description ?? line.memo ?? "-",
+                line.partner?.name ?? "-",
+                numberLabel(line.debit),
+                numberLabel(line.credit),
+                numberLabel(line.runningBalance),
+              ].forEach((value) => {
+                const cell = row.insertCell();
+                cell.textContent = value;
+                cell.style.cssText =
+                  "padding:7px;border:1px solid #cbd5e1;text-align:start;";
+              });
+            });
+            window.document.body.appendChild(table);
+            const tableCanvas = await html2canvas(table, {
+              backgroundColor: "#ffffff",
+              scale: 2,
+            });
+            table.remove();
+            document.addImage(
+              tableCanvas.toDataURL("image/png"),
+              "PNG",
+              14,
+              43,
+              269,
+              (tableCanvas.height / tableCanvas.width) * 269,
+            );
+          }
+        }
+        blob = document.output("blob");
+        extension = "pdf";
+      }
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileName}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setLedgerExportFormat(null);
+      gooeyToast.success(t("admin.reports.monthly.exportSuccess"));
+    } catch {
+      gooeyToast.error(t("admin.reports.monthly.exportFailed"));
+    } finally {
+      setIsExportingLedgerReport(false);
+    }
+  };
+
+  const downloadMonthlyReport = async () => {
+    if (!monthlyExportFormat) return;
+
+    setIsExportingMonthlyReport(true);
+    const fileName = `monthly-report-${selectedMonthRange.from}`;
+    const headers = [
+      t("admin.reports.monthly.exportMetric"),
+      ...monthlyChartCurrencies,
+    ];
+    const dataRows = monthlyExportRows.map((row) => [
+      row.metric,
+      ...monthlyChartCurrencies.map((currencyCode) => row.values[currencyCode]),
+    ]);
+
+    // Fetch detailed transaction data for the selected month
+    let allJournalEntries: JournalEntryRow[] = [];
+    try {
+      const params = {
+        from: selectedMonthRange.from,
+        to: selectedMonthRange.to,
+        status: "posted" as JournalStatus,
+        page: 1,
+        limit: 100,
+      };
+      const firstPage = await fetchJournalReport(params);
+      allJournalEntries = [...firstPage.items];
+      
+      // Fetch remaining pages if any
+      if (firstPage.pagination?.hasNextPage) {
+        const totalPages = firstPage.pagination.totalPages || 1;
+        for (let page = 2; page <= totalPages; page++) {
+          const nextPage = await fetchJournalReport({ ...params, page });
+          allJournalEntries.push(...nextPage.items);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch journal entries:", error);
+      // Continue with export even if journal data fails
+    }
+
+    // Organize transactions by type
+    const salesTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "sale" || journal.movements?.some(m => m.type === "return_out")
+    );
+    const purchaseTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "purchase" || journal.movements?.some(m => m.type === "return_in")
+    );
+    const paymentTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "payment"
+    );
+    const moneyTransferTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "money_transfer"
+    );
+    const manualTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "manual"
+    );
+
+    try {
+      let blob: Blob;
+      let extension: "pdf" | "xlsx";
+
+      if (monthlyExportFormat === "excel") {
+        const XLSX = await import("xlsx");
+        const workbook = XLSX.utils.book_new();
+        
+        // 1. Summary worksheet
+        const summaryWorksheet = XLSX.utils.aoa_to_sheet([
+          [reportSystemName],
+          [t("admin.reports.monthly.title")],
+          [
+            `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
+          ],
+          [`${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}`],
+          [
+            `${t("admin.reports.export.generatedAt")}: ${new Date().toLocaleString()}`,
+          ],
+          [],
+          headers,
+          ...dataRows,
+        ]);
+        summaryWorksheet["!cols"] = [
+          { wch: 28 },
+          ...monthlyChartCurrencies.map(() => ({ wch: 16 })),
+        ];
+        XLSX.utils.book_append_sheet(
+          workbook,
+          summaryWorksheet,
+          t("admin.reports.monthly.summary").slice(0, 31),
+        );
+
+        // Helper function to create transaction worksheets
+        const createTransactionWorksheet = (
+          transactions: JournalEntryRow[],
+          title: string,
+          sheetName: string
+        ) => {
+          if (transactions.length === 0) return;
+          
+          const transactionHeaders = [
+            t("admin.reports.column.date"),
+            t("admin.reports.column.journal"),
+            t("admin.reports.column.description"),
+            t("admin.reports.column.source"),
+            t("admin.reports.column.status"),
+            t("admin.reports.column.createdBy"),
+            t("admin.reports.column.totalDebit"),
+            t("admin.reports.column.totalCredit"),
+          ];
+          
+          const transactionRows = transactions.map((journal) => {
+            const totalDebit = journal.lines?.reduce((sum, line) => sum + Number(line.debit || 0), 0) || 0;
+            const totalCredit = journal.lines?.reduce((sum, line) => sum + Number(line.credit || 0), 0) || 0;
+            
+            return [
+              dateLabel(journal.entryDate),
+              journal.number,
+              journal.description ?? "-",
+              optionLabel(journal.sourceType),
+              optionLabel(journal.status),
+              userLabel(journal.createdBy),
+              totalDebit,
+              totalCredit,
+            ];
+          });
+
+          const worksheet = XLSX.utils.aoa_to_sheet([
+            [reportSystemName],
+            [title],
+            [
+              `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
+            ],
+            [`${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}`],
+            [`${t("admin.reports.export.count")}: ${transactions.length}`],
+            [],
+            transactionHeaders,
+            ...transactionRows,
+          ]);
+          
+          worksheet["!cols"] = [
+            { wch: 12 }, // Date
+            { wch: 16 }, // Journal Number
+            { wch: 30 }, // Description
+            { wch: 15 }, // Source
+            { wch: 12 }, // Status
+            { wch: 20 }, // Created By
+            { wch: 14 }, // Total Debit
+            { wch: 14 }, // Total Credit
+          ];
+          
+          XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
+        };
+
+        // 2. Sales transactions worksheet
+        createTransactionWorksheet(
+          salesTransactions,
+          "Sales Transactions",
+          "Sales"
+        );
+
+        // 3. Purchase transactions worksheet
+        createTransactionWorksheet(
+          purchaseTransactions,
+          "Purchase Transactions",
+          "Purchases"
+        );
+
+        // 4. Payment transactions worksheet
+        createTransactionWorksheet(
+          paymentTransactions,
+          "Payment Transactions",
+          "Payments"
+        );
+
+        // 5. Money transfer transactions worksheet
+        createTransactionWorksheet(
+          moneyTransferTransactions,
+          "Money Transfer Transactions",
+          "Transfers"
+        );
+
+        // 6. Manual transactions worksheet
+        createTransactionWorksheet(
+          manualTransactions,
+          "Manual Transactions",
+          "Manual"
+        );
+
+        // 7. All transactions worksheet (if any)
+        if (allJournalEntries.length > 0) {
+          createTransactionWorksheet(
+            allJournalEntries,
+            "All Transactions",
+            "All Transactions"
+          );
+        }
+
+        blob = new Blob(
+          [XLSX.write(workbook, { bookType: "xlsx", type: "array" })],
+          {
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          },
+        );
+        extension = "xlsx";
+      } else {
+        const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+          import("jspdf"),
+          import("jspdf-autotable"),
+        ]);
+        const document = new jsPDF({ orientation: "landscape" });
+        const fontData = await getMonthlyReportFont();
+        document.addFileToVFS("NotoNaskhArabic.ttf", fontData);
+        document.addFont("NotoNaskhArabic.ttf", "NotoNaskhArabic", "normal");
+        document.setFont("NotoNaskhArabic", "normal");
+        let y = 16;
+
+        document.setFontSize(16);
+        document.text(reportSystemName, 14, y);
+        y += 8;
+        document.setFontSize(10);
+        document.setTextColor(90);
+        document.text(t("admin.reports.monthly.title"), 14, y);
+        y += 6;
+        document.text(
+          `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
+          14,
+          y,
+        );
+        y += 6;
+        document.text(
+          `${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}  |  ${t("admin.reports.export.generatedAt")}: ${new Date().toLocaleString()}`,
+          14,
+          y,
+        );
+        document.setTextColor(0);
+        
+        // Summary table
+        autoTable(document, {
+          startY: y + 7,
+          head: [headers],
+          body: dataRows.map((row) => row.map(String)),
+          theme: "grid",
+          styles: { font: "NotoNaskhArabic", fontSize: 9, cellPadding: 3 },
+          headStyles: {
+            fillColor: [0, 102, 255],
+            textColor: 255,
+            font: "NotoNaskhArabic",
+          },
+          alternateRowStyles: { fillColor: [245, 248, 252] },
+          columnStyles: { 0: { cellWidth: 70 } },
+        });
+
+        // Helper function to add transaction tables
+        const addTransactionTable = (
+          transactions: JournalEntryRow[],
+          title: string
+        ) => {
+          if (transactions.length === 0) return;
+          
+          const lastTable = (document as { lastAutoTable?: { finalY: number } }).lastAutoTable;
+          y = lastTable ? lastTable.finalY + 10 : y + 20;
+          
+          document.addPage();
+          y = 16;
+          document.setFontSize(14);
+          document.text(title, 14, y);
+          y += 8;
+          
+          const transactionHeaders = [
+            t("admin.reports.column.date"),
+            t("admin.reports.column.journal"),
+            t("admin.reports.column.description"),
+            t("admin.reports.column.source"),
+            t("admin.reports.column.status"),
+            t("admin.reports.column.totalDebit"),
+            t("admin.reports.column.totalCredit"),
+          ];
+          
+          const transactionRows = transactions.map((journal) => {
+            const totalDebit = journal.lines?.reduce((sum, line) => sum + Number(line.debit || 0), 0) || 0;
+            const totalCredit = journal.lines?.reduce((sum, line) => sum + Number(line.credit || 0), 0) || 0;
+            
+            return [
+              dateLabel(journal.entryDate),
+              journal.number,
+              journal.description ?? "-",
+              optionLabel(journal.sourceType),
+              optionLabel(journal.status),
+              numberLabel(totalDebit),
+              numberLabel(totalCredit),
+            ];
+          });
+
+          autoTable(document, {
+            startY: y,
+            head: [transactionHeaders],
+            body: transactionRows,
+            theme: "grid",
+            styles: { font: "NotoNaskhArabic", fontSize: 8, cellPadding: 2 },
+            headStyles: {
+              fillColor: [0, 102, 255],
+              textColor: 255,
+              font: "NotoNaskhArabic",
+            },
+            alternateRowStyles: { fillColor: [245, 248, 252] },
+            columnStyles: {
+              0: { cellWidth: 20 }, // Date
+              1: { cellWidth: 25 }, // Journal Number
+              2: { cellWidth: 40 }, // Description
+              3: { cellWidth: 20 }, // Source
+              4: { cellWidth: 15 }, // Status
+              5: { cellWidth: 20 }, // Total Debit
+              6: { cellWidth: 20 }, // Total Credit
+            },
+          });
+        };
+
+        // Add transaction tables if there are transactions
+        if (allJournalEntries.length > 0) {
+          // Sales transactions
+          addTransactionTable(salesTransactions, "Sales Transactions");
+          
+          // Purchase transactions
+          addTransactionTable(purchaseTransactions, "Purchase Transactions");
+          
+          // Payment transactions
+          addTransactionTable(paymentTransactions, "Payment Transactions");
+          
+          // Money transfer transactions
+          addTransactionTable(moneyTransferTransactions, "Money Transfer Transactions");
+          
+          // Manual transactions
+          addTransactionTable(manualTransactions, "Manual Transactions");
+          
+          // All transactions summary
+          document.addPage();
+          y = 16;
+          document.setFontSize(14);
+          document.text("Transaction Summary", 14, y);
+          y += 8;
+          
+          const summaryHeaders = [
+            "Transaction Type",
+            t("admin.reports.column.count"),
+            t("admin.reports.column.totalDebit"),
+            t("admin.reports.column.totalCredit"),
+          ];
+          
+          const calculateTransactionTotals = (transactions: JournalEntryRow[]) => {
+            const count = transactions.length;
+            const totalDebit = transactions.reduce((sum, journal) => {
+              return sum + (journal.lines?.reduce((lineSum, line) => lineSum + Number(line.debit || 0), 0) || 0);
+            }, 0);
+            const totalCredit = transactions.reduce((sum, journal) => {
+              return sum + (journal.lines?.reduce((lineSum, line) => lineSum + Number(line.credit || 0), 0) || 0);
+            }, 0);
+            return { count, totalDebit, totalCredit };
+          };
+          
+          const summaryRows = [
+            [
+              "Sales Transactions",
+              salesTransactions.length,
+              numberLabel(calculateTransactionTotals(salesTransactions).totalDebit),
+              numberLabel(calculateTransactionTotals(salesTransactions).totalCredit),
+            ],
+            [
+              "Purchase Transactions",
+              purchaseTransactions.length,
+              numberLabel(calculateTransactionTotals(purchaseTransactions).totalDebit),
+              numberLabel(calculateTransactionTotals(purchaseTransactions).totalCredit),
+            ],
+            [
+              "Payment Transactions",
+              paymentTransactions.length,
+              numberLabel(calculateTransactionTotals(paymentTransactions).totalDebit),
+              numberLabel(calculateTransactionTotals(paymentTransactions).totalCredit),
+            ],
+            [
+              "Money Transfer Transactions",
+              moneyTransferTransactions.length,
+              numberLabel(calculateTransactionTotals(moneyTransferTransactions).totalDebit),
+              numberLabel(calculateTransactionTotals(moneyTransferTransactions).totalCredit),
+            ],
+            [
+              "Manual Transactions",
+              manualTransactions.length,
+              numberLabel(calculateTransactionTotals(manualTransactions).totalDebit),
+              numberLabel(calculateTransactionTotals(manualTransactions).totalCredit),
+            ],
+            [
+              "Total Transactions",
+              allJournalEntries.length,
+              numberLabel(calculateTransactionTotals(allJournalEntries).totalDebit),
+              numberLabel(calculateTransactionTotals(allJournalEntries).totalCredit),
+            ],
+          ];
+
+          autoTable(document, {
+            startY: y,
+            head: [summaryHeaders],
+            body: summaryRows,
+            theme: "grid",
+            styles: { font: "NotoNaskhArabic", fontSize: 9, cellPadding: 3 },
+            headStyles: {
+              fillColor: [0, 102, 255],
+              textColor: 255,
+              font: "NotoNaskhArabic",
+            },
+            alternateRowStyles: { fillColor: [245, 248, 252] },
+            columnStyles: {
+              0: { cellWidth: 40 }, // Transaction Type
+              1: { cellWidth: 20 }, // Count
+              2: { cellWidth: 25 }, // Total Debit
+              3: { cellWidth: 25 }, // Total Credit
+            },
+          });
+        }
+
+        blob = document.output("blob");
+        extension = "pdf";
+      }
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileName}.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      gooeyToast.success(t("admin.reports.monthly.exportSuccess"));
+      setMonthlyExportFormat(null);
+    } catch {
+      gooeyToast.error(t("admin.reports.monthly.exportFailed"));
+    } finally {
+      setIsExportingMonthlyReport(false);
+    }
+  };
   const reportKpis = useMemo<
     Array<{
       label: string;
@@ -1367,12 +2088,34 @@ export function AdminReportsContent() {
     t,
   ]);
 
+  // Determine which export buttons to show based on active tab
+  const exportActions = activeTab === "monthly" ? (
+    <ExportButtonGroup
+      onExportPdf={() => setMonthlyExportFormat("pdf")}
+      onExportExcel={() => setMonthlyExportFormat("excel")}
+      pdfDisabled={monthlyChartData.length === 0}
+      excelDisabled={monthlyChartData.length === 0}
+      pdfLabel={t("admin.reports.monthly.exportPdf")}
+      excelLabel={t("admin.reports.monthly.exportExcel")}
+    />
+  ) : activeTab === "ledger" ? (
+    <ExportButtonGroup
+      onExportPdf={() => void prepareLedgerExport("pdf")}
+      onExportExcel={() => void prepareLedgerExport("excel")}
+      pdfDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
+      excelDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
+      pdfLabel={t("admin.reports.monthly.exportPdf")}
+      excelLabel={t("admin.reports.monthly.exportExcel")}
+    />
+  ) : null;
+
   return (
     <div className="space-y-1">
       <AdminPageHeader
         eyebrow={t("admin.reports.eyebrow")}
         title={t("admin.reports.title")}
         description={t("admin.reports.description")}
+        actions={exportActions}
       />
       <div className="space-y-1">
         <div className="grid gap-1 grid-cols-2 md:grid-cols-3  xl:grid-cols-4">
@@ -1716,6 +2459,9 @@ export function AdminReportsContent() {
                   contentClassName="z-[1500]"
                 />
               </div>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                {/* Export buttons moved to header */}
+              </div>
             </div>
 
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -1801,6 +2547,100 @@ export function AdminReportsContent() {
           </div>
         ) : null}
 
+        <FormModal
+          open={monthlyExportFormat !== null}
+          title={t("admin.reports.monthly.exportPreviewTitle")}
+          description={t("admin.reports.monthly.exportPreviewDescription", {
+            format:
+              monthlyExportFormat === "pdf"
+                ? t("admin.reports.monthly.exportPdf")
+                : t("admin.reports.monthly.exportExcel"),
+          })}
+          onClose={() => setMonthlyExportFormat(null)}
+          onSubmit={() => void downloadMonthlyReport()}
+          submitting={isExportingMonthlyReport}
+          submitLabel={
+            monthlyExportFormat === "pdf"
+              ? t("admin.reports.monthly.downloadPdf")
+              : t("admin.reports.monthly.downloadExcel")
+          }
+          submittingLabel={t("admin.reports.monthly.exporting")}
+          cancelLabel={t("admin.reports.action.cancel")}
+          closeLabel={t("admin.reports.action.close")}
+          panelClassName="max-w-4xl"
+          contentClassName="block"
+        >
+          <div className="space-y-4 col-span-2">
+            <div className="grid gap-3 border border-light-border bg-light-bg/50 p-3 text-sm dark:border-dark-border dark:bg-dark-bg/40 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.monthly.exportPeriod")}
+                </p>
+                <p className="mt-1 font-semibold text-light-text dark:text-dark-text">
+                  {selectedMonthRange.from} — {selectedMonthRange.to}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.monthly.exportFormat")}
+                </p>
+                <p className="mt-1 font-semibold text-light-text dark:text-dark-text">
+                  {monthlyExportFormat === "pdf"
+                    ? t("admin.reports.monthly.exportPdf")
+                    : t("admin.reports.monthly.exportExcel")}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.monthly.exportCurrencies")}
+                </p>
+                <p className="mt-1 font-semibold text-light-text dark:text-dark-text">
+                  {monthlyChartCurrencies.join(", ") || "-"}
+                </p>
+              </div>
+            </div>
+            <div className="overflow-x-auto border border-light-border dark:border-dark-border">
+              <table className="w-full min-w-[34rem] text-left text-sm">
+                <thead className="bg-light-bg text-xs uppercase tracking-wide text-light-muted dark:bg-dark-bg dark:text-dark-muted">
+                  <tr>
+                    <th className="px-3 py-2.5 font-semibold">
+                      {t("admin.reports.monthly.exportMetric")}
+                    </th>
+                    {monthlyChartCurrencies.map((currencyCode) => (
+                      <th
+                        key={currencyCode}
+                        className="px-3 py-2.5 text-end font-semibold"
+                      >
+                        {currencyCode}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyExportRows.map((row) => (
+                    <tr
+                      key={row.metric}
+                      className="border-t border-light-border dark:border-dark-border"
+                    >
+                      <td className="px-3 py-2 font-medium text-light-text dark:text-dark-text">
+                        {row.metric}
+                      </td>
+                      {monthlyChartCurrencies.map((currencyCode) => (
+                        <td
+                          key={currencyCode}
+                          className="px-3 py-2 text-end tabular-nums text-light-text dark:text-dark-text"
+                        >
+                          {numberLabel(row.values[currencyCode])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </FormModal>
+
         {activeTab === "ledger" ? (
           <Table
             toolbar={
@@ -1816,12 +2656,14 @@ export function AdminReportsContent() {
                         : t("admin.reports.filter.account")}
                     </span>
                   </div>
-                  <TableToolbar.IconButton
-                    icon={<RefreshCcw className="size-4" />}
-                    onClick={() => void ledgerQuery.refetch()}
-                  >
-                    {t("admin.reports.action.refresh")}
-                  </TableToolbar.IconButton>
+                  <div className="flex flex-wrap gap-2">
+                    <TableToolbar.IconButton
+                      icon={<RefreshCcw className="size-4" />}
+                      onClick={() => void ledgerQuery.refetch()}
+                    >
+                      {t("admin.reports.action.refresh")}
+                    </TableToolbar.IconButton>
+                  </div>
                 </TableToolbar.Row>
                 <TableToolbar.Row justify="start">
                   <TableToolbar.Section className="grid w-full grid-cols-1 gap-2 md:grid-cols-[minmax(18rem,1fr)_minmax(12rem,14rem)_minmax(12rem,14rem)]">
@@ -2008,6 +2850,115 @@ export function AdminReportsContent() {
             disabled={ledgerQuery.isFetching}
           />
         ) : null}
+
+        <FormModal
+          open={ledgerExportFormat !== null}
+          title={t("admin.reports.ledger.exportPreviewTitle")}
+          description={t("admin.reports.ledger.exportPreviewDescription", {
+            count: ledgerExportData?.items.length ?? 0,
+          })}
+          onClose={() => setLedgerExportFormat(null)}
+          onSubmit={() => void downloadLedgerReport()}
+          submitting={isExportingLedgerReport}
+          submitLabel={
+            ledgerExportFormat === "pdf"
+              ? t("admin.reports.monthly.downloadPdf")
+              : t("admin.reports.monthly.downloadExcel")
+          }
+          submittingLabel={t("admin.reports.monthly.exporting")}
+          cancelLabel={t("admin.reports.action.cancel")}
+          closeLabel={t("admin.reports.action.close")}
+          panelClassName="max-w-6xl"
+          contentClassName="block"
+        >
+          <div className="space-y-4 col-span-2">
+            <div className="grid gap-3 border border-light-border bg-light-bg/50 p-3 text-sm dark:border-dark-border dark:bg-dark-bg/40 sm:grid-cols-3">
+              <div>
+                <p className="text-xs text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.filter.account")}
+                </p>
+                <p className="font-semibold">
+                  {ledgerExportData?.account
+                    ? `${ledgerExportData.account.code} - ${ledgerExportData.account.name}`
+                    : "-"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.export.filters")}
+                </p>
+                <p className="font-semibold">
+                  {fromDate} — {toDate}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-light-muted dark:text-dark-muted">
+                  {t("admin.reports.export.preparedBy")}
+                </p>
+                <p className="font-semibold">{reportPreparedBy}</p>
+              </div>
+            </div>
+            {ledgerExportGroups.map(([currency, lines]) => (
+              <div
+                key={currency}
+                className="overflow-x-auto border border-light-border dark:border-dark-border"
+              >
+                <p className="border-b border-light-border bg-light-bg px-3 py-2 text-sm font-semibold dark:border-dark-border dark:bg-dark-bg">
+                  {currency}
+                </p>
+                <table className="w-full min-w-[56rem] text-left text-xs">
+                  <thead className="bg-light-bg/60 text-light-muted dark:bg-dark-bg/60 dark:text-dark-muted">
+                    <tr>
+                      {[
+                        t("admin.reports.column.date"),
+                        t("admin.reports.column.journal"),
+                        t("admin.reports.column.description"),
+                        t("admin.reports.column.partner"),
+                        t("admin.reports.column.debit"),
+                        t("admin.reports.column.credit"),
+                        t("admin.reports.column.balance"),
+                      ].map((label) => (
+                        <th key={label} className="px-3 py-2 font-semibold">
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((line) => (
+                      <tr
+                        key={line.id}
+                        className="border-t border-light-border dark:border-dark-border"
+                      >
+                        <td className="px-3 py-2">
+                          {dateLabel(line.journalEntry?.entryDate)}
+                        </td>
+                        <td className="px-3 py-2">
+                          {line.journalEntry?.number ?? "-"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {line.journalEntry?.description ?? line.memo ?? "-"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {line.partner?.name ?? "-"}
+                        </td>
+                        <td className="px-3 py-2 text-end">
+                          {numberLabel(line.debit)}
+                        </td>
+                        <td className="px-3 py-2 text-end">
+                          {numberLabel(line.credit)}
+                        </td>
+                        <td className="px-3 py-2 text-end">
+                          {numberLabel(line.runningBalance)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </FormModal>
 
         {activeTab === "income" ? (
           <div className="space-y-2">

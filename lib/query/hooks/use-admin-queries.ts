@@ -48,8 +48,10 @@ import {
   fetchPartners,
   fetchPurchaseVendors,
   fetchSaleCustomers,
+  recordPartnerPayment,
   updatePartner,
   type PartnerListParams,
+  type RecordPartnerPaymentInput,
   type SavePartnerInput,
   type SavePartnerLedgerAccountInput,
   type UpdatePartnerInput,
@@ -102,8 +104,10 @@ import {
   type JournalReportParams,
 } from "@/services/reports-admin.service";
 import { fetchStoreSettings } from "@/services/admin-settings.service";
-import { fetchOperations, type OperationListParams } from "@/services/operations.service";
-
+import {
+  fetchOperations,
+  type OperationListParams,
+} from "@/services/operations.service";
 
 export function useStoreSettingsQuery() {
   return useQuery({
@@ -144,7 +148,8 @@ export function useAdminInventoryLocationsQuery() {
 export function useCreateAdminInventoryLocationMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: SaveInventoryLocationInput) => createInventoryLocation(input),
+    mutationFn: (input: SaveInventoryLocationInput) =>
+      createInventoryLocation(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.admin.inventoryLocations(),
@@ -209,7 +214,9 @@ export function useAdminSaleAccountsQuery(types: AccountType[]) {
     queryKey: queryKeys.admin.saleAccounts(types),
     queryFn: async () => {
       const groups = await Promise.all(
-        types.map((type) => fetchAccounts({ type, isActive: true, limit: 100 })),
+        types.map((type) =>
+          fetchAccounts({ type, isActive: true, limit: 100 }),
+        ),
       );
       return groups.flat();
     },
@@ -281,7 +288,10 @@ export function useAdminJournalReportQuery(params: JournalReportParams = {}) {
   });
 }
 
-export function useAdminAccountLedgerQuery(params: AccountLedgerParams, enabled = true) {
+export function useAdminAccountLedgerQuery(
+  params: AccountLedgerParams,
+  enabled = true,
+) {
   return useQuery({
     queryKey: queryKeys.admin.accountLedger(params),
     queryFn: () => fetchAccountLedger(params),
@@ -383,7 +393,8 @@ export function useDeleteAdminProductMutation() {
 export function useCreateAdminInventoryTransferMutation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: SaveInventoryTransferInput) => createInventoryTransfer(input),
+    mutationFn: (input: SaveInventoryTransferInput) =>
+      createInventoryTransfer(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [...queryKeys.admin.all, "products"],
@@ -583,16 +594,26 @@ export function useCreateAdminPartnerMutation() {
   });
 }
 
+export function useRecordAdminPartnerPaymentMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      partnerId,
+      input,
+    }: {
+      partnerId: string;
+      input: RecordPartnerPaymentInput;
+    }) => recordPartnerPayment(partnerId, input),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
+  });
+}
+
 export function useUpdateAdminPartnerMutation() {
   const invalidate = useInvalidateAdminPartners();
   return useMutation({
-    mutationFn: ({
-      id,
-      input,
-    }: {
-      id: string;
-      input: UpdatePartnerInput;
-    }) => updatePartner(id, input),
+    mutationFn: ({ id, input }: { id: string; input: UpdatePartnerInput }) =>
+      updatePartner(id, input),
     onSuccess: invalidate,
   });
 }
@@ -677,7 +698,8 @@ export function useRecordAdminFundingMutation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: RecordFundingInput) => recordFunding(input),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: queryKeys.admin.all }),
   });
 }
 
@@ -712,9 +734,6 @@ export function useUpdateAdminProductCategoryMutation() {
     onSuccess: invalidate,
   });
 }
-
-
-
 
 export function useAdminUsersQuery(status: "active" | "disabled" | "all") {
   return useQuery({
@@ -801,7 +820,6 @@ export function useAdminUserReportCountQuery(userId: number) {
     enabled: userId > 0,
   });
 }
-
 
 function useInvalidateAdminUsers() {
   const queryClient = useQueryClient();

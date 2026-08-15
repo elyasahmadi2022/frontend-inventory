@@ -57,6 +57,7 @@ type Props = {
   customers: PartnerRow[];
   locations: InventoryLocationRow[];
   open: boolean;
+  preselectedCustomerId?: string | null;
   products: ProductRow[];
   sale?: SaleRow | null;
   onClose: () => void;
@@ -128,6 +129,7 @@ export function AdminCreateSaleModal({
   customers,
   locations,
   open,
+  preselectedCustomerId = null,
   products,
   sale = null,
   onClose,
@@ -212,10 +214,13 @@ export function AdminCreateSaleModal({
         })),
       });
     } else {
-      form.reset(adminSaleDefaultValues);
+      form.reset({
+        ...adminSaleDefaultValues,
+        customerId: preselectedCustomerId ?? "",
+      });
     }
     setDraftLine(buildEmptyLine(defaultLocationId));
-  }, [defaultLocationId, form, open, sale]);
+  }, [defaultLocationId, form, open, preselectedCustomerId, sale]);
 
   const productById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),

@@ -1,12 +1,14 @@
 "use client";
 
 import clsx from "clsx";
-import { Edit, Eye, Landmark, Plus, Power, PowerOff, RefreshCw, Trash2 } from "lucide-react";
+import { Edit, Eye, Landmark, PackagePlus, Plus, Power, PowerOff, ReceiptText, RefreshCw, Trash2 } from "lucide-react";
 import { gooeyToast } from "goey-toast";
 import { usePathname } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AdminPartnerLedgerModal } from "@/components/admin/partners/admin-partner-ledger-modal";
 import { AdminPartnerModal } from "@/components/admin/partners/admin-partner-modal";
+import { AdminCreatePurchaseModal } from "@/components/admin/purchases/admin-create-purchase-modal";
+import { AdminCreateSaleModal } from "@/components/admin/sales/admin-create-sale-modal";
 import { ConfirmModal } from "@/components/common/confirm-modal";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
 import { InputField } from "@/components/common/input-field";
@@ -37,6 +39,10 @@ import {
 } from "@/lib/query/hooks";
 import type { AccountRow } from "@/services/accounts.service";
 import type { PartnerRow } from "@/services/partners.service";
+import type {
+  InventoryLocationRow,
+  ProductRow,
+} from "@/services/products.service";
 
 type PartnerStatus = "all" | "active" | "inactive";
 
@@ -49,11 +55,16 @@ const partnerSortAccessors = {
 
 type Props = {
   accounts: AccountRow[];
+  customers: PartnerRow[];
   items: PartnerRow[];
+  locations: InventoryLocationRow[];
   loading?: boolean;
   pagination?: PaginationMeta | null;
+  products: ProductRow[];
   refreshing?: boolean;
   status: PartnerStatus;
+  tradeAccounts: AccountRow[];
+  vendors: PartnerRow[];
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
   onRefresh: () => void;
@@ -62,11 +73,16 @@ type Props = {
 
 export function AdminPartnersTable({
   accounts,
+  customers,
   items,
+  locations,
   loading = false,
   pagination,
+  products,
   refreshing = false,
   status,
+  tradeAccounts,
+  vendors,
   onPageChange,
   onPageSizeChange,
   onRefresh,
@@ -81,6 +97,8 @@ export function AdminPartnersTable({
   const [ledgerOpen, setLedgerOpen] = useState(false);
   const [editing, setEditing] = useState<PartnerRow | null>(null);
   const [ledgerTarget, setLedgerTarget] = useState<PartnerRow | null>(null);
+  const [salePartner, setSalePartner] = useState<PartnerRow | null>(null);
+  const [purchasePartner, setPurchasePartner] = useState<PartnerRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PartnerRow | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -212,6 +230,24 @@ export function AdminPartnersTable({
       />
       <AdminPartnerModal open={partnerOpen} partner={editing} onClose={() => { setPartnerOpen(false); setEditing(null); }} />
       <AdminPartnerLedgerModal accounts={accounts} open={ledgerOpen} partner={ledgerTarget} onClose={() => { setLedgerOpen(false); setLedgerTarget(null); }} />
+      <AdminCreateSaleModal
+        accounts={tradeAccounts}
+        customers={customers}
+        locations={locations}
+        open={salePartner != null}
+        preselectedCustomerId={salePartner?.id}
+        products={products}
+        onClose={() => setSalePartner(null)}
+      />
+      <AdminCreatePurchaseModal
+        accounts={tradeAccounts}
+        locations={locations}
+        open={purchasePartner != null}
+        preselectedVendorId={purchasePartner?.id}
+        products={products}
+        vendors={vendors}
+        onClose={() => setPurchasePartner(null)}
+      />
       <div className="overflow-hidden border border-light-border bg-light-surface shadow-sm dark:border-dark-border dark:bg-dark-surface">
         <Table
           toolbar={
@@ -285,9 +321,15 @@ export function AdminPartnersTable({
                         {
                           label: t("admin.partners.actions.partner"),
                           items: [
+                            ...(row.type === "customer" || row.type === "both"
+                              ? [{ id: "sale", label: t("admin.sales.action.newSale"), icon: ReceiptText, onSelect: () => setSalePartner(row) }]
+                              : []),
+                            ...(row.type === "vendor" || row.type === "both"
+                              ? [{ id: "purchase", label: t("admin.purchases.action.newPurchase"), icon: PackagePlus, onSelect: () => setPurchasePartner(row) }]
+                              : []),
                             { id: "view", label: t("admin.accounts.action.viewDetails"), icon: Eye, href: `${detailsBasePath}/${encodeURIComponent(row.id)}` },
                             { id: "edit", label: t("admin.partners.action.editPartner"), icon: Edit, onSelect: () => { setEditing(row); setPartnerOpen(true); } },
-                            { id: "ledger", label: t("admin.partners.action.addLedger"), icon: Landmark, onSelect: () => { setLedgerTarget(row); setLedgerOpen(true); } },
+                            // { id: "ledger", label: t("admin.partners.action.addLedger"), icon: Landmark, onSelect: () => { setLedgerTarget(row); setLedgerOpen(true); } },
                             { id: "toggle", label: row.isActive ? t("admin.partners.action.deactivate") : t("admin.partners.action.activate"), icon: row.isActive ? PowerOff : Power, variant: row.isActive ? "warning" : "success", disabled: updateMutation.isPending && busyId === row.id, onSelect: () => void toggleStatus(row) },
                             { id: "delete", label: t("admin.partners.action.deletePartner"), icon: Trash2, variant: "danger", disabled: deleteMutation.isPending && busyId === row.id, onSelect: () => setDeleteTarget(row) },
                           ],

@@ -1,6 +1,8 @@
 import Image from "next/image";
 import type { ReactNode } from "react";
+import { FileDown, FileSpreadsheet } from "lucide-react";
 import CoverImage from "@/public/cover.png"
+
 function CornerMark({ position }: { position: "tl" | "tr" }) {
   const pos =
     position === "tl"
@@ -13,6 +15,7 @@ function CornerMark({ position }: { position: "tl" | "tr" }) {
     </span>
   );
 }
+
 type AdminPageHeaderProps = {
   eyebrow?: string;
   title: string;
@@ -135,6 +138,69 @@ export function AdminStatCard({
       </div>
 
       {hint ? <div className="mt-1.5 break-words text-[10px] leading-snug text-muted sm:mt-2 sm:text-xs">{hint}</div> : null}
+    </div>
+  );
+}
+
+
+type ExportButtonProps = {
+  type: "pdf" | "excel";
+  onClick: () => void;
+  disabled?: boolean;
+  label?: string;
+};
+
+export function ExportButton({ type, onClick, disabled = false, label }: ExportButtonProps) {
+  const isPdf = type === "pdf";
+  const Icon = isPdf ? FileDown : FileSpreadsheet;
+  const defaultLabel = isPdf ? "Export PDF" : "Export Excel";
+  
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex min-h-10 items-center justify-center gap-2 border ${
+        isPdf 
+          ? "border-rose-500/30 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20"
+          : "border-emerald-500/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+      } px-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50`}
+    >
+      <Icon className="size-4" />
+      {label || defaultLabel}
+    </button>
+  );
+}
+
+export function ExportButtonGroup({ 
+  onExportPdf, 
+  onExportExcel, 
+  pdfDisabled = false, 
+  excelDisabled = false,
+  pdfLabel,
+  excelLabel
+}: {
+  onExportPdf: () => void;
+  onExportExcel: () => void;
+  pdfDisabled?: boolean;
+  excelDisabled?: boolean;
+  pdfLabel?: string;
+  excelLabel?: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <ExportButton
+        type="pdf"
+        onClick={onExportPdf}
+        disabled={pdfDisabled}
+        label={pdfLabel}
+      />
+      <ExportButton
+        type="excel"
+        onClick={onExportExcel}
+        disabled={excelDisabled}
+        label={excelLabel}
+      />
     </div>
   );
 }

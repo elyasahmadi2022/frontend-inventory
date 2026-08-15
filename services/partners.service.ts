@@ -7,6 +7,7 @@ type ApiEnvelope<TData> = {
   ledgerAccount?: TData;
   pagination?: ProductPagination;
   partner?: TData;
+  payment?: TData;
 };
 
 export type PartnerType = "customer" | "vendor" | "both" | "sarafi" | "staff";
@@ -15,7 +16,12 @@ export type PartnerLedgerAccount = {
   id: string;
   accountId: string;
   currencyCode: "AFN" | "USD" | "PKR";
-  type: "receivable" | "payable" | "advance_received" | "advance_paid" | "deposit";
+  type:
+    | "receivable"
+    | "payable"
+    | "advance_received"
+    | "advance_paid"
+    | "deposit";
   isDefault?: boolean;
   account?: Pick<AccountRow, "id" | "code" | "name" | "type">;
 };
@@ -67,6 +73,15 @@ export type SavePartnerLedgerAccountInput = {
   isDefault?: boolean;
 };
 
+export type RecordPartnerPaymentInput = {
+  direction: "receive" | "pay";
+  currencyCode: "AFN" | "USD" | "PKR";
+  amount: number;
+  accountId: string;
+  paymentDate: string;
+  notes?: string;
+};
+
 function cleanOptional(value?: string) {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : undefined;
@@ -96,7 +111,9 @@ function partnerPayload(input: Partial<SavePartnerInput>) {
         ? cleanOptional(input.receivableAccountId)
         : undefined,
     payableAccountId:
-      "payableAccountId" in input ? cleanOptional(input.payableAccountId) : undefined,
+      "payableAccountId" in input
+        ? cleanOptional(input.payableAccountId)
+        : undefined,
   };
 }
 
@@ -117,13 +134,16 @@ export async function fetchPartners(
   };
 }
 
-export async function createPartner(input: SavePartnerInput): Promise<PartnerRow> {
+export async function createPartner(
+  input: SavePartnerInput,
+): Promise<PartnerRow> {
   const res = await apiRequest<ApiEnvelope<PartnerRow>>("/api/partners", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(partnerPayload(input)),
   });
-  if (!res.partner) throw new ApiError("Invalid partner response.", { status: 500 });
+  if (!res.partner)
+    throw new ApiError("Invalid partner response.", { status: 500 });
   return res.partner;
 }
 
@@ -136,7 +156,8 @@ export async function updatePartner(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updatePartnerPayload(input)),
   });
-  if (!res.partner) throw new ApiError("Invalid partner response.", { status: 500 });
+  if (!res.partner)
+    throw new ApiError("Invalid partner response.", { status: 500 });
   return res.partner;
 }
 
@@ -144,7 +165,8 @@ export async function deletePartner(id: string): Promise<PartnerRow> {
   const res = await apiRequest<ApiEnvelope<PartnerRow>>(`/api/partners/${id}`, {
     method: "DELETE",
   });
-  if (!res.partner) throw new ApiError("Invalid partner response.", { status: 500 });
+  if (!res.partner)
+    throw new ApiError("Invalid partner response.", { status: 500 });
   return res.partner;
 }
 
@@ -164,6 +186,23 @@ export async function createPartnerLedgerAccount(
     throw new ApiError("Invalid ledger account response.", { status: 500 });
   }
   return res.ledgerAccount;
+}
+
+export async function recordPartnerPayment(
+  partnerId: string,
+  input: RecordPartnerPaymentInput,
+) {
+  const res = await apiRequest<ApiEnvelope<{ id: string }>>(
+    `/api/partners/${partnerId}/payments`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!res.payment)
+    throw new ApiError("Invalid payment response.", { status: 500 });
+  return res.payment;
 }
 
 export async function fetchSaleCustomers(): Promise<PartnerRow[]> {

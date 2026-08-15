@@ -56,6 +56,7 @@ type Props = {
   accounts: AccountRow[];
   locations: InventoryLocationRow[];
   open: boolean;
+  preselectedVendorId?: string | null;
   products: ProductRow[];
   vendors: PartnerRow[];
   purchase?: PurchaseRow | null;
@@ -125,6 +126,7 @@ export function AdminCreatePurchaseModal({
   accounts,
   locations,
   open,
+  preselectedVendorId = null,
   products,
   vendors,
   purchase = null,
@@ -203,10 +205,13 @@ export function AdminCreatePurchaseModal({
         })),
       });
     } else {
-      form.reset(adminPurchaseDefaultValues);
+      form.reset({
+        ...adminPurchaseDefaultValues,
+        vendorId: preselectedVendorId ?? "",
+      });
     }
     setDraftLine(buildEmptyLine(defaultLocationId));
-  }, [defaultLocationId, form, open, purchase]);
+  }, [defaultLocationId, form, open, preselectedVendorId, purchase]);
 
   const productById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),

@@ -1,6 +1,7 @@
 "use client";
 
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
+import { AdminJournalEntryModal } from "@/components/admin/journals/admin-journal-entry-modal";
 import { AdminKpiCard } from "@/components/admin/dashboard/dashboard-panel";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
 import { DatePickerField } from "@/components/common/date-picker-field";
@@ -13,6 +14,7 @@ import TableColumn from "@/components/common/table-column";
 import TableHeader from "@/components/common/table-header";
 import TableRow from "@/components/common/table-row";
 import TableToolbar from "@/components/common/table-tool-bar";
+import { ToggleSwitch } from "@/components/common/toggle-switch";
 import { CurrencyFlagIcon } from "@/components/common/currency-flag-icon";
 import { toPaginationMeta } from "@/lib/admin/pagination-meta";
 import { ApiError } from "@/lib/api";
@@ -21,6 +23,7 @@ import { useI18n } from "@/lib/i18n";
 import { useAdminJournalReportQuery } from "@/lib/query/hooks";
 import type { CurrencyCode } from "@/services/accounts.service";
 import type {
+  JournalLineRow,
   JournalSourceType,
   JournalStatus,
 } from "@/services/reports-admin.service";
@@ -29,6 +32,7 @@ import {
   BookOpenText,
   ReceiptText,
   RefreshCcw,
+  Plus,
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
@@ -67,7 +71,7 @@ function currencyNettedTotals(
         currencyCode?: CurrencyCode;
         debit?: string | number;
         credit?: string | number;
-        account?: { id?: string } | null;
+        account?: { id?: string; type?: string } | null;
       }>
     | undefined,
   field: "debit" | "credit",
@@ -114,6 +118,90 @@ function visibleJournalTotals(
     currencyCode,
     total,
   }));
+}
+
+function journalPaymentDetails(lines: JournalLineRow[] | undefined) {
+  const assetLine = (lines ?? []).find((line) =>
+    ["cash", "bank", "sarafi", "daskhil"].includes(line.account?.type ?? ""),
+  );
+  const partner = (lines ?? []).find((line) =>
+    ["customer", "vendor", "both"].includes(line.partner?.type ?? ""),
+  )?.partner;
+  if (!assetLine) return { partner, direction: undefined, amount: "-" };
+
+  const debit = Number(assetLine.debit ?? 0);
+  const credit = Number(assetLine.credit ?? 0);
+  const amount = Math.max(
+    debit,
+    credit,
+  );
+  return {
+    partner,
+    direction: debit >= credit ? "receive" : "pay",
+    amount: `${absoluteNumberLabel(amount)} ${assetLine.currencyCode ?? ""}`.trim(),
+  };
+}
+
+function SimpleJournalPartner({ lines }: { lines?: JournalLineRow[] }) {
+  const { t } = useI18n();
+  const { partner, direction } = journalPaymentDetails(lines);
+  if (!partner) return <span>-</span>;
+
+  // A partner configured for both roles is labelled by this transaction's cash direction.
+  const partnerType =
+    partner.type === "both"
+      ? direction === "pay"
+        ? "vendor"
+        : "customer"
+      : partner.type;
+  const isCustomer = partnerType === "customer";
+
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+      <span
+        className={`rounded-none px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${
+          isCustomer
+            ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400"
+            : "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400"
+        }`}
+      >
+        {t(`admin.partners.type.${partnerType}` as never)}
+      </span>
+      <span
+        className={
+          isCustomer
+            ? "font-semibold text-sky-700 dark:text-sky-400"
+            : "font-semibold text-amber-700 dark:text-amber-400"
+        }
+      >
+        {partner.name}
+      </span>
+    </span>
+  );
+}
+
+function SimpleJournalAmount({ lines }: { lines?: JournalLineRow[] }) {
+  const { t } = useI18n();
+  const { amount, direction } = journalPaymentDetails(lines);
+  if (!direction || amount === "-") return <span>-</span>;
+  const isReceipt = direction === "receive";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap ${
+        isReceipt
+          ? "text-emerald-700 dark:text-emerald-400"
+          : "text-rose-700 dark:text-rose-400"
+      }`}
+    >
+      <span className="text-[10px] font-bold uppercase tracking-wide">
+        {t(
+          `admin.journals.entry.${isReceipt ? "receipt" : "payment"}` as never,
+        )}
+      </span>
+      <span className="font-semibold tabular-nums">{amount}</span>
+    </span>
+  );
 }
 
 function TonePill({
@@ -185,6 +273,8 @@ export function AdminJournalsContent() {
   );
   const [currency, setCurrency] = useState<CurrencyCode | "all">("all");
   const [number, setNumber] = useState(searchParams.get("journal") ?? "");
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [simpleView, setSimpleView] = useState(true);
   const journalQuery = useAdminJournalReportQuery({
     page,
     limit: pageSize,
@@ -256,10 +346,24 @@ export function AdminJournalsContent() {
 
   return (
     <div className="space-y-1">
+      <AdminJournalEntryModal
+        open={entryOpen}
+        onClose={() => setEntryOpen(false)}
+      />
       <AdminPageHeader
         eyebrow={t("admin.journals.eyebrow")}
         title={t("admin.journals.title")}
         description={t("admin.journals.description")}
+        actions={
+          <button
+            type="button"
+            onClick={() => setEntryOpen(true)}
+            className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
+          >
+            <Plus className="size-4" />
+            {t("admin.journals.entry.add")}
+          </button>
+        }
       />
       <div className="grid grid-cols-2 gap-1 md:grid-cols-4">
         <AdminKpiCard
@@ -305,12 +409,20 @@ export function AdminJournalsContent() {
                   {t("admin.reports.journal.description")}
                 </span>
               </div>
+              <div className="flex gap-2.5 items-center">
               <TableToolbar.IconButton
                 icon={<RefreshCcw className="size-4" />}
                 onClick={() => void journalQuery.refetch()}
               >
                 {t("admin.reports.action.refresh")}
               </TableToolbar.IconButton>
+              <ToggleSwitch
+                id="admin-journals-simple-view"
+                checked={simpleView}
+                onCheckedChange={setSimpleView}
+                label={t("admin.journals.simpleView")}
+              />
+              </div>
             </TableToolbar.Row>
             <TableToolbar.Row justify="start">
               <div className="grid w-full grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
@@ -395,7 +507,8 @@ export function AdminJournalsContent() {
             "source",
             "status",
             "createdBy",
-            "postedBy",
+            simpleView ? "partner" : "postedBy",
+            ...(simpleView ? ["amount"] : []),
           ].map((column) => ({
             title: t(`admin.reports.column.${column}` as never),
             tooltip: t(`admin.reports.columnHelp.${column}` as never),
@@ -404,7 +517,7 @@ export function AdminJournalsContent() {
         <TableBody>
           {journals.length === 0 ? (
             <DataTableEmptyState
-              colSpan={7}
+              colSpan={simpleView ? 8 : 7}
               title={t("admin.reports.empty.journals")}
             />
           ) : (
@@ -451,76 +564,91 @@ export function AdminJournalsContent() {
                     />
                   </TableColumn>
                   <TableColumn>{userLabel(journal.createdBy)}</TableColumn>
-                  <TableColumn>{userLabel(journal.postedBy)}</TableColumn>
-                </TableRow>
-                <TableRow>
-                  <TableColumn
-                    colSpan={7}
-                    nowrap={false}
-                    className="bg-light-bg/70 p-0 dark:bg-dark-bg/60"
-                  >
-                    <div className="px-4 py-3">
-                      <div className="mb-2 grid grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem] gap-3 border-b border-light-border pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-light-muted dark:border-dark-border dark:text-dark-muted">
-                        <span>{t("admin.reports.column.account")}</span>
-                        <span>{t("admin.reports.column.partner")}</span>
-                        <span>{t("admin.reports.column.currency")}</span>
-                        <span>{t("admin.reports.column.description")}</span>
-                        <span className="text-end">
-                          {t("admin.reports.column.debit")}
-                        </span>
-                        <span className="text-end">
-                          {t("admin.reports.column.credit")}
-                        </span>
-                      </div>
-                      {(journal.lines ?? []).map((line) => (
-                        <div
-                          key={line.id}
-                          className="grid grid-cols-1 gap-2 border-b border-light-border/70 py-2 text-xs text-light-muted last:border-b-0 dark:border-dark-border/70 dark:text-dark-muted sm:grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem]"
-                        >
-                          <span className="font-medium text-light-text dark:text-dark-text">
-                            {line.account?.code ?? "-"} -{" "}
-                            {line.account?.name ?? "-"}
-                          </span>
-                          <span>{line.partner?.name ?? "-"}</span>
-                          <span>{line.currencyCode}</span>
-                          <span>{line.memo ?? journal.description ?? "-"}</span>
-                          <span className="text-end font-semibold text-green-700 dark:text-green-400">
-                            {absoluteNumberLabel(line.debit)}
-                          </span>
-                          <span className="text-end font-semibold text-rose-700 dark:text-rose-400">
-                            {absoluteNumberLabel(line.credit)}
-                          </span>
-                        </div>
-                      ))}
-                      <div className="mt-2 grid grid-cols-1 gap-2 border-t border-light-border pt-2 text-xs font-semibold dark:border-dark-border sm:grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem]">
-                        <span className="text-light-text dark:text-dark-text">
-                          {t("admin.reports.journal.total")}
-                        </span>
-                        <span />
-                        <span />
-                        <span />
-                        <div className="text-end">
-                          <CurrencyTotals
-                            totals={currencyNettedTotals(
-                              journal.lines,
-                              "debit",
-                            )}
-                            kind="positive"
-                          />
-                        </div>
-                        <div className="text-end">
-                          <CurrencyTotals
-                            totals={currencyNettedTotals(
-                              journal.lines,
-                              "credit",
-                            )}
-                            kind="negative"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                  <TableColumn>
+                    {simpleView ? (
+                      <SimpleJournalPartner lines={journal.lines} />
+                    ) : (
+                      userLabel(journal.postedBy)
+                    )}
                   </TableColumn>
+                  {simpleView ? (
+                    <TableColumn>
+                      <SimpleJournalAmount lines={journal.lines} />
+                    </TableColumn>
+                  ) : null}
                 </TableRow>
+                {!simpleView ? (
+                  <TableRow>
+                    <TableColumn
+                      colSpan={7}
+                      nowrap={false}
+                      className="bg-light-bg/70 p-0 dark:bg-dark-bg/60"
+                    >
+                      <div className="px-4 py-3">
+                        <div className="mb-2 grid grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem] gap-3 border-b border-light-border pb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-light-muted dark:border-dark-border dark:text-dark-muted">
+                          <span>{t("admin.reports.column.account")}</span>
+                          <span>{t("admin.reports.column.partner")}</span>
+                          <span>{t("admin.reports.column.currency")}</span>
+                          <span>{t("admin.reports.column.description")}</span>
+                          <span className="text-end">
+                            {t("admin.reports.column.debit")}
+                          </span>
+                          <span className="text-end">
+                            {t("admin.reports.column.credit")}
+                          </span>
+                        </div>
+                        {(journal.lines ?? []).map((line) => (
+                          <div
+                            key={line.id}
+                            className="grid grid-cols-1 gap-2 border-b border-light-border/70 py-2 text-xs text-light-muted last:border-b-0 dark:border-dark-border/70 dark:text-dark-muted sm:grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem]"
+                          >
+                            <span className="font-medium text-light-text dark:text-dark-text">
+                              {line.account?.code ?? "-"} -{" "}
+                              {line.account?.name ?? "-"}
+                            </span>
+                            <span>{line.partner?.name ?? "-"}</span>
+                            <span>{line.currencyCode}</span>
+                            <span>
+                              {line.memo ?? journal.description ?? "-"}
+                            </span>
+                            <span className="text-end font-semibold text-green-700 dark:text-green-400">
+                              {absoluteNumberLabel(line.debit)}
+                            </span>
+                            <span className="text-end font-semibold text-rose-700 dark:text-rose-400">
+                              {absoluteNumberLabel(line.credit)}
+                            </span>
+                          </div>
+                        ))}
+                        <div className="mt-2 grid grid-cols-1 gap-2 border-t border-light-border pt-2 text-xs font-semibold dark:border-dark-border sm:grid-cols-[minmax(13rem,1.25fr)_minmax(8rem,0.8fr)_7rem_minmax(10rem,1fr)_8rem_8rem]">
+                          <span className="text-light-text dark:text-dark-text">
+                            {t("admin.reports.journal.total")}
+                          </span>
+                          <span />
+                          <span />
+                          <span />
+                          <div className="text-end">
+                            <CurrencyTotals
+                              totals={currencyNettedTotals(
+                                journal.lines,
+                                "debit",
+                              )}
+                              kind="positive"
+                            />
+                          </div>
+                          <div className="text-end">
+                            <CurrencyTotals
+                              totals={currencyNettedTotals(
+                                journal.lines,
+                                "credit",
+                              )}
+                              kind="negative"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </TableColumn>
+                  </TableRow>
+                ) : null}
               </Fragment>
             ))
           )}
