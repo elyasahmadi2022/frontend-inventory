@@ -23,10 +23,9 @@ import {
 import type { PartnerRow, PartnerType } from "@/services/partners.service";
 
 type PartnerStatus = "all" | "active" | "inactive";
-type PartnerTab = "all" | "customer" | "vendor" | "staff" | "sarafi";
+type PartnerTab = "customer" | "vendor";
 
 function partnerMatchesTab(partner: PartnerRow, tab: PartnerTab) {
-  if (tab === "all") return true;
   if (tab === "customer") return partner.type === "customer" || partner.type === "both";
   if (tab === "vendor") return partner.type === "vendor" || partner.type === "both";
   return partner.type === tab;
@@ -34,11 +33,11 @@ function partnerMatchesTab(partner: PartnerRow, tab: PartnerTab) {
 
 export function AdminPartnersContent() {
   const { language, t } = useI18n();
-  const [tab, setTab] = useState<PartnerTab>("all");
+  const [tab, setTab] = useState<PartnerTab>("customer");
   const [status, setStatus] = useState<PartnerStatus>("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const partnerType: PartnerType | undefined = tab === "all" ? undefined : tab;
+  const partnerType: PartnerType | undefined = tab === "customer" ? undefined : tab;
   const partnersQuery = useAdminPartnersQuery({
     page,
     limit: pageSize,
@@ -129,22 +128,7 @@ export function AdminPartnersContent() {
         { label: t("admin.partners.stats.vendorOutstanding"), value: "-", icon: WalletCards, tone: "warning" as const },
       ];
     }
-    if (tab === "staff") {
-      return [
-        { label: t("admin.partners.stats.employeeTotal"), value: partners.length, icon: UserRoundCog, tone: "neutral" as const },
-        { label: t("admin.partners.stats.employeeSalary"), value: "-", icon: WalletCards, tone: "warning" as const },
-        { label: t("admin.partners.stats.employeeExpenses"), value: "-", icon: ReceiptText, tone: "neutral" as const },
-        { label: t("admin.partners.stats.employeeActive"), value: activeCount, icon: Users, tone: "success" as const },
-      ];
-    }
-    if (tab === "sarafi") {
-      return [
-        { label: t("admin.partners.stats.sarafiTotal"), value: partners.length, icon: Landmark, tone: "neutral" as const },
-        { label: t("admin.partners.stats.sarafiBalance"), value: "-", icon: WalletCards, tone: "neutral" as const },
-        { label: t("admin.partners.stats.sarafiVolume"), value: "-", icon: Banknote, tone: "neutral" as const },
-        { label: t("admin.partners.stats.sarafiActive"), value: activeCount, icon: Users, tone: "success" as const },
-      ];
-    }
+
     return [
       { label: t("admin.partners.stats.partners"), value: allPartners.length, icon: Handshake, tone: "neutral" as const },
       { label: t("admin.partners.stats.customers"), value: customers, icon: Users, tone: "success" as const },
@@ -154,11 +138,8 @@ export function AdminPartnersContent() {
   }, [activeCount, allPartners.length, customers, ledgers, partners.length, tab, tabLedgers, t, vendors]);
   const tabs = useMemo(
     () => [
-      { id: "all", label: t("admin.partners.tabs.all"), icon: <Handshake className="size-4" /> },
       { id: "customer", label: t("admin.partners.tabs.customers"), icon: <Users className="size-4" /> },
       { id: "vendor", label: t("admin.partners.tabs.vendors"), icon: <Store className="size-4" /> },
-      { id: "staff", label: t("admin.partners.tabs.employees"), icon: <UserRoundCog className="size-4" /> },
-      { id: "sarafi", label: t("admin.partners.tabs.sarafi"), icon: <Landmark className="size-4" /> },
     ],
     [t],
   );

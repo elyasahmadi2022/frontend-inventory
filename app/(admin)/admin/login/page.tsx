@@ -156,35 +156,7 @@ export default function AdminLoginPage() {
             <aside className="admin-login-panel relative z-2 hidden overflow-hidden bg-transparent border-e border-light-border p-8 dark:border-dark-border md:flex md:flex-col md:justify-between lg:p-10">
               <div className=" absolute inset-0 w-full h-full -z-1 ">
                 <Lottie animationData={AdminLogin} className="w-full h-full" />
-              </div>
-
-              <div className="">
-
-
-                <p className="mt-6 text-xs font-semibold uppercase tracking-[0.2em] text-primary-600 dark:text-primary-500">
-                  {t("adminLogin.eyebrow")}
-                </p>
-                <h2 className="mt-3 text-3xl font-semibold leading-tight text-light-text dark:text-dark-text">
-                  {t("adminLogin.sideTitle")}
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-light-muted dark:text-dark-muted">
-                  {t("adminLogin.sideDescription")}
-                </p>
-              </div>
-
-              <ul className="mt-10 space-y-3">
-                {features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="flex items-center gap-3 text-sm text-light-text dark:text-dark-text"
-                  >
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-none bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-500">
-                      <CheckIcon />
-                    </span>
-                    <span>{feature}</span>
-                  </li>
-                ))}
-              </ul>
+              </div>              
             </aside>
 
             <div className="p-6 sm:p-8 lg:p-12">
@@ -195,10 +167,6 @@ export default function AdminLoginPage() {
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-light-text dark:text-dark-text">
                 {t("adminLogin.title")}
               </h1>
-              <p className="mt-2 max-w-lg text-sm leading-6 text-light-muted dark:text-dark-muted">
-                {t("adminLogin.description")}
-              </p>
-
               <form onSubmit={onSubmit} className="mt-8 space-y-5" noValidate>
                 <FormInputField
                   control={control}
@@ -258,17 +226,7 @@ export default function AdminLoginPage() {
                 </button>
               </form>
 
-              <div className="mt-8 border-t border-light-border pt-6 text-center text-sm text-light-muted dark:border-dark-border dark:text-dark-muted">
-                <span>{t("adminLogin.wrongPlace")} </span>
-                <Link
-                  href={appRoutes.login}
-                  className="font-semibold text-primary-600 transition hover:text-primary-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/25 dark:text-primary-500 dark:hover:text-primary-100"
-                >
-                  {t("adminLogin.publicLogin")}
-                </Link>
-
-
-              </div>
+              
             </div>
           </div>
         </div>

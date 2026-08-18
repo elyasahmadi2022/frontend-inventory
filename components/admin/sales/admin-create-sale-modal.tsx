@@ -114,7 +114,9 @@ const currencyOptions: SelectOption[] = [
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
 function money(value: number) {
-  return Number(value || 0).toLocaleString();
+  const amount = Number(value) || 0;
+  const rounded = Math.round((amount + Number.EPSILON) * 100) / 100;
+  return rounded.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function buildEmptyLine(locationId = ""): DraftLine {

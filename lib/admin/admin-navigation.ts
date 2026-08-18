@@ -67,21 +67,21 @@ export const adminNavigation: AdminNavItem[] = [
     activePrefixes: [appRoutes.adminSales, appRoutes.adminPurchases],
   },
 
-  {
-    key: "accounts",
-    labelKey: "admin.nav.accounts",
-    icon: Landmark,
-    href: appRoutes.adminAccounts,
-    matchPrefix: true,
-    requiredPermission: "accounts.manage",
-  },
-  {
-    key: "transfers",
-    labelKey: "admin.nav.transfers",
-    icon: CreditCard,
-    href: appRoutes.adminTransfers,
-    matchPrefix: true,
-  },
+  // {
+  //   key: "accounts",
+  //   labelKey: "admin.nav.accounts",
+  //   icon: Landmark,
+  //   href: appRoutes.adminAccounts,
+  //   matchPrefix: true,
+  //   requiredPermission: "accounts.manage",
+  // },
+  // {
+  //   key: "transfers",
+  //   labelKey: "admin.nav.transfers",
+  //   icon: CreditCard,
+  //   href: appRoutes.adminTransfers,
+  //   matchPrefix: true,
+  // },
   {
     key: "reports",
     labelKey: "admin.nav.reports",

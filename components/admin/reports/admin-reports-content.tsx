@@ -1,6 +1,9 @@
 "use client";
 
-import { AdminPageHeader, ExportButtonGroup } from "@/components/admin/admin-page-header";
+import {
+  AdminPageHeader,
+  ExportButtonGroup,
+} from "@/components/admin/admin-page-header";
 import { AdminKpiCard } from "@/components/admin/dashboard/dashboard-panel";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
 import { DatePickerField } from "@/components/common/date-picker-field";
@@ -18,8 +21,13 @@ import TableToolbar from "@/components/common/table-tool-bar";
 import TooltipComponent from "@/context/TooltipContext";
 import { toPaginationMeta } from "@/lib/admin/pagination-meta";
 import { ApiError } from "@/lib/api";
-import { getLocalDateString, toIsoDate } from "@/lib/date-format";
+import {
+  formatAppLongDate,
+  getLocalDateString,
+  toIsoDate,
+} from "@/lib/date-format";
 import { useI18n } from "@/lib/i18n";
+import { getStoredCalendarType } from "@/lib/user-preferences";
 import { useAuth } from "@/hooks/use-auth";
 import {
   useAdminAccountBalancesQuery,
@@ -45,7 +53,10 @@ import type {
   PartnerBalanceRow,
   StatementAccountRow,
 } from "@/services/reports-admin.service";
-import { fetchAccountLedger, fetchJournalReport } from "@/services/reports-admin.service";
+import {
+  fetchAccountLedger,
+  fetchJournalReport,
+} from "@/services/reports-admin.service";
 import { gooeyToast } from "goey-toast";
 import {
   BadgeDollarSign,
@@ -73,7 +84,6 @@ import {
 } from "recharts";
 
 type ReportTab =
-  | "journal"
   | "monthly"
   | "ledger"
   | "income"
@@ -103,7 +113,9 @@ function monthRange(year: string, month: string) {
 
 function numberLabel(value: string | number | null | undefined) {
   const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed.toLocaleString() : "0";
+  if (!Number.isFinite(parsed)) return "0";
+  const rounded = Math.round((parsed + Number.EPSILON) * 100) / 100;
+  return rounded.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function absoluteNumberLabel(value: string | number | null | undefined) {
@@ -292,6 +304,36 @@ function groupedAmounts(
     currencyCode,
     total,
   }));
+}
+
+const CASH_ACCOUNT_TYPES = new Set(["cash", "bank", "sarafi", "daskhil"]);
+
+function filterCurrencyTotals(
+  totals: Array<{ currencyCode: string; total: number }>,
+  currency: CurrencyCode | "all",
+) {
+  if (currency === "all") return totals;
+  const match = totals.find((item) => item.currencyCode === currency);
+  return match ? [match] : [{ currencyCode: currency, total: 0 }];
+}
+
+function FilteredCurrencyValue({
+  totals,
+  currency,
+}: {
+  totals: Array<{ currencyCode: string; total: number }>;
+  currency: CurrencyCode | "all";
+}) {
+  const filtered = filterCurrencyTotals(totals, currency);
+  if (currency !== "all" && filtered.length === 1) {
+    return (
+      <BaseCurrencyValue
+        value={filtered[0].total}
+        currencyCode={filtered[0].currencyCode}
+      />
+    );
+  }
+  return <CurrencyValueRows totals={filtered} />;
 }
 
 function CurrencyValueRows({
@@ -671,7 +713,7 @@ function CombinedStatementTable({
 }
 
 export function AdminReportsContent() {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const { user } = useAuth();
   const now = new Date();
   const [activeTab, setActiveTab] = useState<ReportTab>("monthly");
@@ -691,8 +733,11 @@ export function AdminReportsContent() {
     "all",
   );
   const [journalNumber, setJournalNumber] = useState("");
+  const [monthlyCurrency, setMonthlyCurrency] = useState<CurrencyCode | "all">(
+    "all",
+  );
   const [monthlyExportFormat, setMonthlyExportFormat] = useState<
-    "pdf" | "excel" | null
+    "pdf" | "csv" | null
   >(null);
   const [isExportingMonthlyReport, setIsExportingMonthlyReport] =
     useState(false);
@@ -862,6 +907,46 @@ export function AdminReportsContent() {
       ),
     [financialSummary],
   );
+  const monthlyCashCurrencyTotals = useMemo(
+    () =>
+      groupedAmounts(
+        (monthlyBalanceSheet?.assets ?? [])
+          .filter((row) => CASH_ACCOUNT_TYPES.has(row.account.type))
+          .map((row) => ({
+            currencyCode: row.currencyCode ?? baseCurrency,
+            amount: row.balance,
+          })),
+      ),
+    [baseCurrency, monthlyBalanceSheet],
+  );
+  const monthlyReceivableCurrencyTotals = useMemo(
+    () =>
+      groupedAmounts(
+        (monthlyFinancialSummary?.receivables.rows ?? []).map((row) => ({
+          currencyCode: row.currencyCode,
+          amount: row.balance,
+        })),
+      ),
+    [monthlyFinancialSummary],
+  );
+  const monthlyPayableCurrencyTotals = useMemo(
+    () =>
+      groupedAmounts(
+        (monthlyFinancialSummary?.payables.rows ?? []).map((row) => ({
+          currencyCode: row.currencyCode,
+          amount: row.balance,
+        })),
+      ),
+    [monthlyFinancialSummary],
+  );
+  const monthlyAssetCurrencyTotals = useMemo(
+    () =>
+      (monthlyBalanceSheet?.nativeTotals ?? []).map((row) => ({
+        currencyCode: row.currencyCode,
+        total: Number(row.assets),
+      })),
+    [monthlyBalanceSheet],
+  );
   const incomeRows = useMemo(
     () => [
       ...(incomeStatement?.revenue ?? []).map((row) => ({
@@ -877,11 +962,6 @@ export function AdminReportsContent() {
   );
   const tabs = useMemo(
     () => [
-      {
-        id: "journal",
-        label: t("admin.reports.tabs.journal"),
-        icon: <ReceiptText className="size-4" />,
-      },
       {
         id: "monthly",
         label: t("admin.reports.monthly.title"),
@@ -1054,7 +1134,7 @@ export function AdminReportsContent() {
       ),
     ] satisfies MonthlyChartEntry[];
   }, [monthlyBalanceSheet, monthlyFinancialSummary, monthlyIncomeStatement, t]);
-  const monthlyChartCurrencies = useMemo(
+  const monthlyAvailableCurrencies = useMemo(
     () => [
       ...new Set(
         monthlyChartData.flatMap((entry) =>
@@ -1063,6 +1143,15 @@ export function AdminReportsContent() {
       ),
     ],
     [monthlyChartData],
+  );
+  const monthlyChartCurrencies = useMemo(
+    () =>
+      monthlyCurrency === "all"
+        ? monthlyAvailableCurrencies
+        : monthlyAvailableCurrencies.filter(
+            (currencyCode) => currencyCode === monthlyCurrency,
+          ),
+    [monthlyAvailableCurrencies, monthlyCurrency],
   );
   const monthlyExportRows = useMemo(
     () =>
@@ -1294,11 +1383,14 @@ export function AdminReportsContent() {
 
     setIsExportingMonthlyReport(true);
     const fileName = `monthly-report-${selectedMonthRange.from}`;
-    const headers = [
+    const reportDate = (value: string) =>
+      formatAppLongDate(value, getStoredCalendarType(), language);
+    const reportPeriod = `${reportDate(selectedMonthRange.from)} — ${reportDate(selectedMonthRange.to)}`;
+    const overviewHeaders = [
       t("admin.reports.monthly.exportMetric"),
       ...monthlyChartCurrencies,
     ];
-    const dataRows = monthlyExportRows.map((row) => [
+    const overviewRows = monthlyExportRows.map((row) => [
       row.metric,
       ...monthlyChartCurrencies.map((currencyCode) => row.values[currencyCode]),
     ]);
@@ -1315,7 +1407,7 @@ export function AdminReportsContent() {
       };
       const firstPage = await fetchJournalReport(params);
       allJournalEntries = [...firstPage.items];
-      
+
       // Fetch remaining pages if any
       if (firstPage.pagination?.hasNextPage) {
         const totalPages = firstPage.pagination.totalPages || 1;
@@ -1329,382 +1421,368 @@ export function AdminReportsContent() {
       // Continue with export even if journal data fails
     }
 
-    // Organize transactions by type
+    // Keep every posted transaction and its native-currency journal lines. This
+    // avoids combining AFN, USD, and PKR into misleading grand totals.
     const salesTransactions = allJournalEntries.filter(
-      (journal) => journal.sourceType === "sale" || journal.movements?.some(m => m.type === "return_out")
+      (journal) =>
+        journal.sourceType === "sale" ||
+        journal.movements?.some((m) => m.type === "return_out"),
     );
     const purchaseTransactions = allJournalEntries.filter(
-      (journal) => journal.sourceType === "purchase" || journal.movements?.some(m => m.type === "return_in")
+      (journal) =>
+        journal.sourceType === "purchase" ||
+        journal.movements?.some((m) => m.type === "return_in"),
     );
-    const paymentTransactions = allJournalEntries.filter(
-      (journal) => journal.sourceType === "payment"
+    const paidTransactions = allJournalEntries.filter(
+      (journal) => journal.sourceType === "payment",
     );
-    const moneyTransferTransactions = allJournalEntries.filter(
-      (journal) => journal.sourceType === "money_transfer"
-    );
-    const manualTransactions = allJournalEntries.filter(
-      (journal) => journal.sourceType === "manual"
-    );
+
+    const transactionHeaders = [
+      t("admin.reports.column.date"),
+      t("admin.reports.column.description"),
+      t("admin.reports.column.account"),
+      t("admin.reports.column.partner"),
+      t("admin.reports.column.currency"),
+      t("admin.reports.column.debit"),
+      t("admin.reports.column.credit"),
+    ];
+    const transactionRows = (transactions: JournalEntryRow[]) => {
+      const rows = transactions.flatMap((journal) =>
+        (journal.lines ?? []).map((line) => [
+          reportDate(journal.entryDate),
+          journal.description ?? "-",
+          line.account ? `${line.account.code} - ${line.account.name}` : "-",
+          line.partner?.name ?? "-",
+          line.currencyCode ?? "-",
+          Number(line.debit ?? 0),
+          Number(line.credit ?? 0),
+        ]),
+      );
+      const totals = new Map<string, { debit: number; credit: number }>();
+      rows.forEach((row) => {
+        const currency = String(row[4]);
+        const total = totals.get(currency) ?? { debit: 0, credit: 0 };
+        total.debit += Number(row[5]);
+        total.credit += Number(row[6]);
+        totals.set(currency, total);
+      });
+      return [
+        ...rows,
+        ...[...totals.entries()].map(([currency, total]) => [
+          "",
+          t("admin.reports.journal.total"),
+          "",
+          "",
+          currency,
+          total.debit,
+          total.credit,
+        ]),
+      ];
+    };
+    const incomeHeaders = [
+      t("admin.reports.column.account"),
+      t("admin.reports.column.type"),
+      t("admin.reports.column.currency"),
+      t("admin.reports.column.totalAmount"),
+    ];
+    const incomeRows = [
+      ...(monthlyIncomeStatement?.revenue ?? []).map((row) => [
+        `${row.account.code} - ${row.account.name}`,
+        t("admin.reports.income.revenue"),
+        row.currencyCode ?? baseCurrency,
+        Math.abs(Number(row.balance ?? 0)),
+      ]),
+      ...(monthlyIncomeStatement?.expenses ?? []).map((row) => [
+        `${row.account.code} - ${row.account.name}`,
+        t("admin.reports.income.expenses"),
+        row.currencyCode ?? baseCurrency,
+        Math.abs(Number(row.balance ?? 0)),
+      ]),
+    ];
+    const partnerHeaders = [
+      t("admin.reports.column.partner"),
+      t("admin.partners.column.type"),
+      t("admin.reports.column.currency"),
+      t("admin.partners.details.settledAmount"),
+      t("admin.partners.details.outstandingAmount"),
+    ];
+    const partnerTypeLabel = (type?: string | null) => {
+      if (type === "customer") return t("admin.partners.type.customer");
+      if (type === "vendor") return t("admin.partners.type.vendor");
+      if (type === "both") return t("admin.partners.type.both");
+      if (type === "sarafi") return t("admin.partners.type.sarafi");
+      if (type === "staff") return t("admin.partners.type.staff");
+      return "-";
+    };
+    const partnerRows = (rows: PartnerBalanceRow[]) =>
+      rows.map((row) => [
+        row.partner?.name ?? "-",
+        partnerTypeLabel(row.partner?.type),
+        row.currencyCode,
+        Number(row.debitTotal ?? 0) - Number(row.creditTotal ?? 0),
+        Math.abs(Number(row.balance ?? 0)),
+      ]);
+    type ExportRow = Array<string | number>;
+    const sections: Array<{
+      title: string;
+      headers: string[];
+      rows: ExportRow[];
+    }> = [
+      {
+        title: t("admin.reports.monthly.summary"),
+        headers: overviewHeaders,
+        rows: overviewRows,
+      },
+      {
+        title: t("admin.reports.tabs.income"),
+        headers: incomeHeaders,
+        rows: incomeRows,
+      },
+      {
+        title: t("admin.reports.monthly.sales"),
+        headers: transactionHeaders,
+        rows: transactionRows(salesTransactions),
+      },
+      {
+        title: t("admin.reports.monthly.purchases"),
+        headers: transactionHeaders,
+        rows: transactionRows(purchaseTransactions),
+      },
+      {
+        title: t("admin.operations.stats.paid"),
+        headers: transactionHeaders,
+        rows: transactionRows(paidTransactions),
+      },
+      {
+        title: t("admin.reports.summary.receivables"),
+        headers: partnerHeaders,
+        rows: partnerRows(monthlyFinancialSummary?.receivables.rows ?? []),
+      },
+      {
+        title: t("admin.reports.summary.payables"),
+        headers: partnerHeaders,
+        rows: partnerRows(monthlyFinancialSummary?.payables.rows ?? []),
+      },
+    ];
 
     try {
       let blob: Blob;
-      let extension: "pdf" | "xlsx";
+      let extension: "pdf" | "csv";
 
-      if (monthlyExportFormat === "excel") {
-        const XLSX = await import("xlsx");
-        const workbook = XLSX.utils.book_new();
-        
-        // 1. Summary worksheet
-        const summaryWorksheet = XLSX.utils.aoa_to_sheet([
+      if (monthlyExportFormat === "csv") {
+        const escapeCsv = (value: string | number) =>
+          `"${(typeof value === "number" ? numberLabel(value) : value).replaceAll('"', '""')}"`;
+        const csvRows: ExportRow[] = [
           [reportSystemName],
           [t("admin.reports.monthly.title")],
-          [
-            `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
-          ],
+          [`${t("admin.reports.monthly.exportPeriod")}: ${reportPeriod}`],
           [`${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}`],
-          [
-            `${t("admin.reports.export.generatedAt")}: ${new Date().toLocaleString()}`,
-          ],
           [],
-          headers,
-          ...dataRows,
-        ]);
-        summaryWorksheet["!cols"] = [
-          { wch: 28 },
-          ...monthlyChartCurrencies.map(() => ({ wch: 16 })),
-        ];
-        XLSX.utils.book_append_sheet(
-          workbook,
-          summaryWorksheet,
-          t("admin.reports.monthly.summary").slice(0, 31),
-        );
-
-        // Helper function to create transaction worksheets
-        const createTransactionWorksheet = (
-          transactions: JournalEntryRow[],
-          title: string,
-          sheetName: string
-        ) => {
-          if (transactions.length === 0) return;
-          
-          const transactionHeaders = [
-            t("admin.reports.column.date"),
-            t("admin.reports.column.journal"),
-            t("admin.reports.column.description"),
-            t("admin.reports.column.source"),
-            t("admin.reports.column.status"),
-            t("admin.reports.column.createdBy"),
-            t("admin.reports.column.totalDebit"),
-            t("admin.reports.column.totalCredit"),
-          ];
-          
-          const transactionRows = transactions.map((journal) => {
-            const totalDebit = journal.lines?.reduce((sum, line) => sum + Number(line.debit || 0), 0) || 0;
-            const totalCredit = journal.lines?.reduce((sum, line) => sum + Number(line.credit || 0), 0) || 0;
-            
-            return [
-              dateLabel(journal.entryDate),
-              journal.number,
-              journal.description ?? "-",
-              optionLabel(journal.sourceType),
-              optionLabel(journal.status),
-              userLabel(journal.createdBy),
-              totalDebit,
-              totalCredit,
-            ];
-          });
-
-          const worksheet = XLSX.utils.aoa_to_sheet([
-            [reportSystemName],
-            [title],
-            [
-              `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
-            ],
-            [`${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}`],
-            [`${t("admin.reports.export.count")}: ${transactions.length}`],
+          ...sections.flatMap((section) => [
+            [section.title],
+            section.headers,
+            ...section.rows,
             [],
-            transactionHeaders,
-            ...transactionRows,
-          ]);
-          
-          worksheet["!cols"] = [
-            { wch: 12 }, // Date
-            { wch: 16 }, // Journal Number
-            { wch: 30 }, // Description
-            { wch: 15 }, // Source
-            { wch: 12 }, // Status
-            { wch: 20 }, // Created By
-            { wch: 14 }, // Total Debit
-            { wch: 14 }, // Total Credit
-          ];
-          
-          XLSX.utils.book_append_sheet(workbook, worksheet, sheetName.slice(0, 31));
-        };
-
-        // 2. Sales transactions worksheet
-        createTransactionWorksheet(
-          salesTransactions,
-          "Sales Transactions",
-          "Sales"
-        );
-
-        // 3. Purchase transactions worksheet
-        createTransactionWorksheet(
-          purchaseTransactions,
-          "Purchase Transactions",
-          "Purchases"
-        );
-
-        // 4. Payment transactions worksheet
-        createTransactionWorksheet(
-          paymentTransactions,
-          "Payment Transactions",
-          "Payments"
-        );
-
-        // 5. Money transfer transactions worksheet
-        createTransactionWorksheet(
-          moneyTransferTransactions,
-          "Money Transfer Transactions",
-          "Transfers"
-        );
-
-        // 6. Manual transactions worksheet
-        createTransactionWorksheet(
-          manualTransactions,
-          "Manual Transactions",
-          "Manual"
-        );
-
-        // 7. All transactions worksheet (if any)
-        if (allJournalEntries.length > 0) {
-          createTransactionWorksheet(
-            allJournalEntries,
-            "All Transactions",
-            "All Transactions"
-          );
-        }
-
+          ]),
+        ];
         blob = new Blob(
-          [XLSX.write(workbook, { bookType: "xlsx", type: "array" })],
+          [
+            `\uFEFF${csvRows.map((row) => row.map(escapeCsv).join(",")).join("\r\n")}`,
+          ],
           {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type: "text/csv;charset=utf-8",
           },
         );
-        extension = "xlsx";
+        extension = "csv";
       } else {
-        const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        // Render with the browser's locale font before adding it to the PDF.
+        // jsPDF's text encoder cannot reliably shape Persian/Pashto glyphs.
+        const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
           import("jspdf"),
-          import("jspdf-autotable"),
+          import("html2canvas"),
         ]);
         const document = new jsPDF({ orientation: "landscape" });
-        const fontData = await getMonthlyReportFont();
-        document.addFileToVFS("NotoNaskhArabic.ttf", fontData);
-        document.addFont("NotoNaskhArabic.ttf", "NotoNaskhArabic", "normal");
-        document.setFont("NotoNaskhArabic", "normal");
-        let y = 16;
-
-        document.setFontSize(16);
-        document.text(reportSystemName, 14, y);
-        y += 8;
-        document.setFontSize(10);
-        document.setTextColor(90);
-        document.text(t("admin.reports.monthly.title"), 14, y);
-        y += 6;
-        document.text(
-          `${t("admin.reports.monthly.exportPeriod")}: ${selectedMonthRange.from} — ${selectedMonthRange.to}`,
-          14,
-          y,
-        );
-        y += 6;
-        document.text(
-          `${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}  |  ${t("admin.reports.export.generatedAt")}: ${new Date().toLocaleString()}`,
-          14,
-          y,
-        );
-        document.setTextColor(0);
-        
-        // Summary table
-        autoTable(document, {
-          startY: y + 7,
-          head: [headers],
-          body: dataRows.map((row) => row.map(String)),
-          theme: "grid",
-          styles: { font: "NotoNaskhArabic", fontSize: 9, cellPadding: 3 },
-          headStyles: {
-            fillColor: [0, 102, 255],
-            textColor: 255,
-            font: "NotoNaskhArabic",
-          },
-          alternateRowStyles: { fillColor: [245, 248, 252] },
-          columnStyles: { 0: { cellWidth: 70 } },
-        });
-
-        // Helper function to add transaction tables
-        const addTransactionTable = (
-          transactions: JournalEntryRow[],
-          title: string
-        ) => {
-          if (transactions.length === 0) return;
-          
-          const lastTable = (document as { lastAutoTable?: { finalY: number } }).lastAutoTable;
-          y = lastTable ? lastTable.finalY + 10 : y + 20;
-          
-          document.addPage();
-          y = 16;
-          document.setFontSize(14);
-          document.text(title, 14, y);
-          y += 8;
-          
-          const transactionHeaders = [
-            t("admin.reports.column.date"),
-            t("admin.reports.column.journal"),
-            t("admin.reports.column.description"),
-            t("admin.reports.column.source"),
-            t("admin.reports.column.status"),
-            t("admin.reports.column.totalDebit"),
-            t("admin.reports.column.totalCredit"),
-          ];
-          
-          const transactionRows = transactions.map((journal) => {
-            const totalDebit = journal.lines?.reduce((sum, line) => sum + Number(line.debit || 0), 0) || 0;
-            const totalCredit = journal.lines?.reduce((sum, line) => sum + Number(line.credit || 0), 0) || 0;
-            
-            return [
-              dateLabel(journal.entryDate),
-              journal.number,
-              journal.description ?? "-",
-              optionLabel(journal.sourceType),
-              optionLabel(journal.status),
-              numberLabel(totalDebit),
-              numberLabel(totalCredit),
-            ];
-          });
-
-          autoTable(document, {
-            startY: y,
-            head: [transactionHeaders],
-            body: transactionRows,
-            theme: "grid",
-            styles: { font: "NotoNaskhArabic", fontSize: 8, cellPadding: 2 },
-            headStyles: {
-              fillColor: [0, 102, 255],
-              textColor: 255,
-              font: "NotoNaskhArabic",
-            },
-            alternateRowStyles: { fillColor: [245, 248, 252] },
-            columnStyles: {
-              0: { cellWidth: 20 }, // Date
-              1: { cellWidth: 25 }, // Journal Number
-              2: { cellWidth: 40 }, // Description
-              3: { cellWidth: 20 }, // Source
-              4: { cellWidth: 15 }, // Status
-              5: { cellWidth: 20 }, // Total Debit
-              6: { cellWidth: 20 }, // Total Credit
-            },
-          });
+        const makePage = () => {
+          const page = window.document.createElement("div");
+          page.dir = window.document.documentElement.dir;
+          page.style.cssText =
+            "position:fixed;left:-10000px;top:0;width:1120px;padding:38px;background:#fff;color:#182230;font:15px var(--font-locale),sans-serif;";
+          return page;
         };
-
-        // Add transaction tables if there are transactions
-        if (allJournalEntries.length > 0) {
-          // Sales transactions
-          addTransactionTable(salesTransactions, "Sales Transactions");
-          
-          // Purchase transactions
-          addTransactionTable(purchaseTransactions, "Purchase Transactions");
-          
-          // Payment transactions
-          addTransactionTable(paymentTransactions, "Payment Transactions");
-          
-          // Money transfer transactions
-          addTransactionTable(moneyTransferTransactions, "Money Transfer Transactions");
-          
-          // Manual transactions
-          addTransactionTable(manualTransactions, "Manual Transactions");
-          
-          // All transactions summary
-          document.addPage();
-          y = 16;
-          document.setFontSize(14);
-          document.text("Transaction Summary", 14, y);
-          y += 8;
-          
-          const summaryHeaders = [
-            "Transaction Type",
-            t("admin.reports.column.count"),
-            t("admin.reports.column.totalDebit"),
-            t("admin.reports.column.totalCredit"),
-          ];
-          
-          const calculateTransactionTotals = (transactions: JournalEntryRow[]) => {
-            const count = transactions.length;
-            const totalDebit = transactions.reduce((sum, journal) => {
-              return sum + (journal.lines?.reduce((lineSum, line) => lineSum + Number(line.debit || 0), 0) || 0);
-            }, 0);
-            const totalCredit = transactions.reduce((sum, journal) => {
-              return sum + (journal.lines?.reduce((lineSum, line) => lineSum + Number(line.credit || 0), 0) || 0);
-            }, 0);
-            return { count, totalDebit, totalCredit };
-          };
-          
-          const summaryRows = [
-            [
-              "Sales Transactions",
-              salesTransactions.length,
-              numberLabel(calculateTransactionTotals(salesTransactions).totalDebit),
-              numberLabel(calculateTransactionTotals(salesTransactions).totalCredit),
-            ],
-            [
-              "Purchase Transactions",
-              purchaseTransactions.length,
-              numberLabel(calculateTransactionTotals(purchaseTransactions).totalDebit),
-              numberLabel(calculateTransactionTotals(purchaseTransactions).totalCredit),
-            ],
-            [
-              "Payment Transactions",
-              paymentTransactions.length,
-              numberLabel(calculateTransactionTotals(paymentTransactions).totalDebit),
-              numberLabel(calculateTransactionTotals(paymentTransactions).totalCredit),
-            ],
-            [
-              "Money Transfer Transactions",
-              moneyTransferTransactions.length,
-              numberLabel(calculateTransactionTotals(moneyTransferTransactions).totalDebit),
-              numberLabel(calculateTransactionTotals(moneyTransferTransactions).totalCredit),
-            ],
-            [
-              "Manual Transactions",
-              manualTransactions.length,
-              numberLabel(calculateTransactionTotals(manualTransactions).totalDebit),
-              numberLabel(calculateTransactionTotals(manualTransactions).totalCredit),
-            ],
-            [
-              "Total Transactions",
-              allJournalEntries.length,
-              numberLabel(calculateTransactionTotals(allJournalEntries).totalDebit),
-              numberLabel(calculateTransactionTotals(allJournalEntries).totalCredit),
-            ],
-          ];
-
-          autoTable(document, {
-            startY: y,
-            head: [summaryHeaders],
-            body: summaryRows,
-            theme: "grid",
-            styles: { font: "NotoNaskhArabic", fontSize: 9, cellPadding: 3 },
-            headStyles: {
-              fillColor: [0, 102, 255],
-              textColor: 255,
-              font: "NotoNaskhArabic",
-            },
-            alternateRowStyles: { fillColor: [245, 248, 252] },
-            columnStyles: {
-              0: { cellWidth: 40 }, // Transaction Type
-              1: { cellWidth: 20 }, // Count
-              2: { cellWidth: 25 }, // Total Debit
-              3: { cellWidth: 25 }, // Total Credit
-            },
+        const addPdfPage = async (page: HTMLDivElement, first = false) => {
+          window.document.body.appendChild(page);
+          const canvas = await html2canvas(page, {
+            backgroundColor: "#ffffff",
+            scale: 2,
           });
+          page.remove();
+          if (!first) document.addPage();
+          document.addImage(
+            canvas.toDataURL("image/png"),
+            "PNG",
+            12,
+            10,
+            273,
+            (canvas.height / canvas.width) * 273,
+          );
+        };
+        const money = (value: string | number) => numberLabel(value);
+        const currencySummary = (
+          totals: Array<{ currencyCode: string; total: number }>,
+        ) =>
+          totals.length
+            ? totals
+                .map((item) => `${money(item.total)} ${item.currencyCode}`)
+                .join("<br>")
+            : "0";
+        const firstPage = makePage();
+        firstPage.innerHTML = `<div style="border-bottom:3px solid #0066ff;padding-bottom:18px;text-align:center"><div style="font-size:27px;font-weight:800">${reportSystemName}</div><div style="font-size:21px;font-weight:700;margin-top:4px">${t("admin.reports.monthly.title")}</div><div style="color:#475569;margin-top:8px">${t("admin.reports.monthly.exportPeriod")}: ${reportPeriod}</div><div style="color:#64748b;font-size:13px;margin-top:6px">${t("admin.reports.export.preparedBy")}: ${reportPreparedBy}</div></div>`;
+        const dashboard = window.document.createElement("div");
+        dashboard.style.cssText =
+          "display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:24px;text-align:center;";
+        const addColumn = (
+          title: string,
+          color: string,
+          entries: Array<[string, string, string]>,
+        ) => {
+          const column = window.document.createElement("section");
+          column.style.cssText = `border:1px solid #cbd5e1;border-top:5px solid ${color};padding:18px;`;
+          const heading = window.document.createElement("h2");
+          heading.textContent = title;
+          heading.style.cssText = "margin:0 0 14px;font-size:18px;";
+          column.appendChild(heading);
+          entries.forEach(([label, value, cardColor]) => {
+            const card = window.document.createElement("div");
+            card.style.cssText = `background:${cardColor}12;border:1px solid ${cardColor}55;padding:11px;margin-top:8px;`;
+            card.innerHTML = `<div style="font-size:13px;color:#475569">${label}</div><div style="font-size:18px;font-weight:800;margin-top:4px">${value}</div>`;
+            column.appendChild(card);
+          });
+          dashboard.appendChild(column);
+        };
+        addColumn(t("admin.reports.tabs.income"), "#047857", [
+          [
+            t("admin.reports.summary.revenue"),
+            currencySummary(
+              (monthlyIncomeStatement?.nativeTotals ?? []).map((row) => ({
+                currencyCode: row.currencyCode,
+                total: Number(row.revenue),
+              })),
+            ),
+            "#059669",
+          ],
+          [
+            t("admin.reports.summary.expenses"),
+            currencySummary(
+              (monthlyIncomeStatement?.nativeTotals ?? []).map((row) => ({
+                currencyCode: row.currencyCode,
+                total: Number(row.expenses),
+              })),
+            ),
+            "#dc2626",
+          ],
+          [
+            t("admin.reports.stats.profitLoss"),
+            currencySummary(
+              (monthlyIncomeStatement?.nativeTotals ?? []).map((row) => ({
+                currencyCode: row.currencyCode,
+                total: Number(row.net),
+              })),
+            ),
+            "#d97706",
+          ],
+        ]);
+        addColumn(t("admin.reports.tabs.summary"), "#2563eb", [
+          [
+            t("admin.reports.monthly.sales"),
+            String(salesTransactions.length),
+            "#059669",
+          ],
+          [
+            t("admin.reports.monthly.purchases"),
+            String(purchaseTransactions.length),
+            "#7c3aed",
+          ],
+          [
+            t("admin.operations.stats.paid"),
+            String(paidTransactions.length),
+            "#dc2626",
+          ],
+          [
+            t("admin.reports.summary.receivables"),
+            currencySummary(monthlyReceivableCurrencyTotals),
+            "#2563eb",
+          ],
+          [
+            t("admin.reports.summary.payables"),
+            currencySummary(monthlyPayableCurrencyTotals),
+            "#d97706",
+          ],
+        ]);
+        firstPage.appendChild(dashboard);
+        await addPdfPage(firstPage, true);
+
+        const addSectionTable = (
+          page: HTMLDivElement,
+          section: (typeof sections)[number],
+          rows: ExportRow[],
+        ) => {
+          const title = window.document.createElement("h2");
+          title.textContent = section.title;
+          title.style.cssText =
+            "margin:0 0 12px;padding-top:8px;text-align:center;font-size:20px;";
+          page.appendChild(title);
+          const table = window.document.createElement("table");
+          table.style.cssText =
+            "width:100%;border-collapse:collapse;text-align:center;font-size:12px;";
+          const header = table.insertRow();
+          section.headers.forEach((label) => {
+            const cell = window.document.createElement("th");
+            cell.textContent = label;
+            cell.style.cssText =
+              "border:1px solid #bfdbfe;background:#0066ff;color:#fff;padding:8px;text-align:center;";
+            header.appendChild(cell);
+          });
+          rows.forEach((row) => {
+            const tr = table.insertRow();
+            row.forEach((value, index) => {
+              const cell = tr.insertCell();
+              cell.textContent =
+                typeof value === "number" ? money(value) : value;
+              const isDebit =
+                section.headers[index] === t("admin.reports.column.debit");
+              const isCredit =
+                section.headers[index] === t("admin.reports.column.credit");
+              cell.style.cssText = `border:1px solid #cbd5e1;padding:7px;text-align:center;${isDebit ? "color:#047857;background:#ecfdf5;font-weight:700;" : isCredit ? "color:#dc2626;background:#fef2f2;font-weight:700;" : ""}`;
+            });
+          });
+          page.appendChild(table);
+        };
+        const sectionGroups = [
+          [sections[0]],
+          [sections[1], sections[2]],
+          [sections[3]],
+          [sections[4], sections[5], sections[6]],
+        ];
+        for (const group of sectionGroups) {
+          const page = makePage();
+          const rowLimit = group.length > 1 ? 10 : 24;
+          group.forEach((section) => {
+            const rows = section.rows.length ? section.rows : [["-"]];
+            addSectionTable(page, section, rows.slice(0, rowLimit));
+          });
+          await addPdfPage(page);
+          for (const section of group) {
+            const rows = section.rows.length ? section.rows : [["-"]];
+            for (let start = rowLimit; start < rows.length; start += 24) {
+              const continuation = makePage();
+              addSectionTable(
+                continuation,
+                section,
+                rows.slice(start, start + 24),
+              );
+              await addPdfPage(continuation);
+            }
+          }
         }
 
         blob = document.output("blob");
@@ -1736,111 +1814,100 @@ export function AdminReportsContent() {
       tone?: "default" | "warning" | "success" | "neutral" | "error";
     }>
   >(() => {
-    if (activeTab === "journal") {
-      const journals = journalQuery.data?.items ?? [];
-      const visibleDebits = visibleJournalTotals(journals, "debit");
-      const visibleCredits = visibleJournalTotals(journals, "credit");
-      const visibleLines = journals.reduce(
-        (sum, journal) => sum + (journal.lines?.length ?? 0),
-        0,
-      );
-      return [
-        {
-          label: t("admin.reports.kpi.journals"),
-          value: journalQuery.data?.pagination?.total ?? journals.length,
-          hint: t("admin.reports.tabs.journal"),
-          icon: ReceiptText,
-          tone: "neutral",
-        },
-        {
-          label: t("admin.reports.details.totalDebit"),
-          value: (
-            <CurrencyTotals
-              totals={visibleDebits.map((item) => ({
-                currencyCode: item.currencyCode,
-                total: Number(item.total),
-              }))}
-              kind="positive"
-            />
-          ),
+    // if (activeTab === "journal") {
+    //   const journals = journalQuery.data?.items ?? [];
+    //   const visibleDebits = visibleJournalTotals(journals, "debit");
+    //   const visibleCredits = visibleJournalTotals(journals, "credit");
+    //   const visibleLines = journals.reduce(
+    //     (sum, journal) => sum + (journal.lines?.length ?? 0),
+    //     0,
+    //   );
+    //   return [
+    //     {
+    //       label: t("admin.reports.kpi.journals"),
+    //       value: journalQuery.data?.pagination?.total ?? journals.length,
+    //       hint: t("admin.reports.tabs.journal"),
+    //       icon: ReceiptText,
+    //       tone: "neutral",
+    //     },
+    //     {
+    //       label: t("admin.reports.details.totalDebit"),
+    //       value: (
+    //         <CurrencyTotals
+    //           totals={visibleDebits.map((item) => ({
+    //             currencyCode: item.currencyCode,
+    //             total: Number(item.total),
+    //           }))}
+    //           kind="positive"
+    //         />
+    //       ),
 
-          icon: TrendingUp,
-          tone: "success",
-        },
-        {
-          label: t("admin.reports.details.totalCredit"),
-          value: <CurrencyTotals totals={visibleCredits} kind="negative" />,
-          icon: TrendingDown,
-          tone: "error",
-        },
-        {
-          label: t("admin.reports.kpi.visibleLines"),
-          value: visibleLines,
-          hint:
-            journalStatus === "all"
-              ? t("admin.reports.filter.allStatuses")
-              : t(`admin.reports.status.${journalStatus}` as never),
-          icon: BookOpenText,
-          tone: "default",
-        },
-      ];
-    }
+    //       icon: TrendingUp,
+    //       tone: "success",
+    //     },
+    //     {
+    //       label: t("admin.reports.details.totalCredit"),
+    //       value: <CurrencyTotals totals={visibleCredits} kind="negative" />,
+    //       icon: TrendingDown,
+    //       tone: "error",
+    //     },
+    //     {
+    //       label: t("admin.reports.kpi.visibleLines"),
+    //       value: visibleLines,
+    //       hint:
+    //         journalStatus === "all"
+    //           ? t("admin.reports.filter.allStatuses")
+    //           : t(`admin.reports.status.${journalStatus}` as never),
+    //       icon: BookOpenText,
+    //       tone: "default",
+    //     },
+    //   ];
+    // }
 
     if (activeTab === "monthly") {
-      const monthlyTotals = monthlyQuery.data?.summary.totals ?? [];
-      const monthlyNativeIncome = monthlyIncomeStatement?.nativeTotals ?? [];
-      const monthlyNativePosition = monthlyBalanceSheet?.nativeTotals ?? [];
       return [
         {
-          label: t("admin.reports.details.totalDebit"),
+          label: t("admin.reports.stats.cash"),
           value: (
-            <CurrencyValueRows
-              totals={monthlyTotals.map((item) => ({
-                currencyCode: item.currencyCode,
-                total: Number(item._sum?.debit ?? 0),
-              }))}
-            />
-          ),
-          icon: TrendingUp,
-          tone: "success",
-        },
-        {
-          label: t("admin.reports.details.totalCredit"),
-          value: (
-            <CurrencyValueRows
-              totals={monthlyTotals.map((item) => ({
-                currencyCode: item.currencyCode,
-                total: Number(item._sum?.credit ?? 0),
-              }))}
-            />
-          ),
-          icon: TrendingDown,
-          tone: "error",
-        },
-        {
-          label: t("admin.reports.stats.profitLoss"),
-          value: (
-            <ProfitLossCurrencyRows
-              totals={monthlyNativeIncome.map((row) => ({
-                currencyCode: row.currencyCode,
-                total: Number(row.net),
-              }))}
-            />
-          ),
-          icon: Scale,
-          tone: "neutral",
-        },
-        {
-          label: t("admin.reports.position.assets"),
-          value: (
-            <CurrencyValueRows
-              totals={monthlyNativePosition.map((row) => ({
-                currencyCode: row.currencyCode,
-                total: Number(row.assets),
-              }))}
+            <FilteredCurrencyValue
+              totals={monthlyCashCurrencyTotals}
+              currency={monthlyCurrency}
             />
           ),
           icon: WalletCards,
+          tone: "neutral",
+        },
+        {
+          label: t("admin.reports.stats.payables"),
+          value: (
+            <FilteredCurrencyValue
+              totals={monthlyPayableCurrencyTotals}
+              currency={monthlyCurrency}
+            />
+          ),
+          icon: ReceiptText,
+          tone: "error",
+        },
+        {
+          label: t("admin.reports.stats.receivables"),
+          value: (
+            <FilteredCurrencyValue
+              totals={monthlyReceivableCurrencyTotals}
+              currency={monthlyCurrency}
+            />
+          ),
+          icon: BadgeDollarSign,
+          tone: "success",
+        },
+        {
+          label: t("admin.reports.stats.totalAssets"),
+          value: (
+            <FilteredCurrencyValue
+              totals={monthlyAssetCurrencyTotals}
+              currency={monthlyCurrency}
+            />
+          ),
+          icon: Landmark,
           tone: "success",
         },
       ];
@@ -2080,34 +2147,38 @@ export function AdminReportsContent() {
     journalQuery.data,
     journalStatus,
     ledgerQuery.data,
+    monthlyAssetCurrencyTotals,
     monthlyBalanceSheet,
-    monthlyIncomeStatement,
-    monthlyQuery.data?.summary.totals,
+    monthlyCashCurrencyTotals,
+    monthlyCurrency,
+    monthlyPayableCurrencyTotals,
+    monthlyReceivableCurrencyTotals,
     payableCurrencyTotals,
     receivableCurrencyTotals,
     t,
   ]);
 
   // Determine which export buttons to show based on active tab
-  const exportActions = activeTab === "monthly" ? (
-    <ExportButtonGroup
-      onExportPdf={() => setMonthlyExportFormat("pdf")}
-      onExportExcel={() => setMonthlyExportFormat("excel")}
-      pdfDisabled={monthlyChartData.length === 0}
-      excelDisabled={monthlyChartData.length === 0}
-      pdfLabel={t("admin.reports.monthly.exportPdf")}
-      excelLabel={t("admin.reports.monthly.exportExcel")}
-    />
-  ) : activeTab === "ledger" ? (
-    <ExportButtonGroup
-      onExportPdf={() => void prepareLedgerExport("pdf")}
-      onExportExcel={() => void prepareLedgerExport("excel")}
-      pdfDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
-      excelDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
-      pdfLabel={t("admin.reports.monthly.exportPdf")}
-      excelLabel={t("admin.reports.monthly.exportExcel")}
-    />
-  ) : null;
+  const exportActions =
+    activeTab === "monthly" ? (
+      <ExportButtonGroup
+        onExportPdf={() => setMonthlyExportFormat("pdf")}
+        onExportExcel={() => setMonthlyExportFormat("csv")}
+        pdfDisabled={monthlyChartData.length === 0}
+        excelDisabled={monthlyChartData.length === 0}
+        pdfLabel={t("admin.reports.monthly.exportPdf")}
+        excelLabel={t("admin.reports.monthly.exportExcel")}
+      />
+    ) : activeTab === "ledger" ? (
+      <ExportButtonGroup
+        onExportPdf={() => void prepareLedgerExport("pdf")}
+        onExportExcel={() => void prepareLedgerExport("excel")}
+        pdfDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
+        excelDisabled={!selectedLedgerAccountId || isPreparingLedgerExport}
+        pdfLabel={t("admin.reports.monthly.exportPdf")}
+        excelLabel={t("admin.reports.monthly.exportExcel")}
+      />
+    ) : null;
 
   return (
     <div className="space-y-1">
@@ -2135,7 +2206,7 @@ export function AdminReportsContent() {
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as ReportTab)}
         />
-        {activeTab === "summary" ? (
+        {/* {activeTab === "summary" ? (
           <div className="border border-primary-500/30 bg-primary-50 px-3 py-2 text-xs text-light-text dark:bg-dark-surface dark:text-dark-text">
             {t("admin.reports.currency.convertedNotice", {
               currency: baseCurrency,
@@ -2156,9 +2227,9 @@ export function AdminReportsContent() {
           <div className="border border-primary-500/30 bg-primary-50 px-3 py-2 text-xs text-light-text dark:bg-dark-surface dark:text-dark-text">
             {t("admin.reports.position.nativeCurrencyNotice")}
           </div>
-        ) : null}
+        ) : null} */}
 
-        {activeTab === "journal" ? (
+        {/* {activeTab === "journal" ? (
           <Table
             toolbar={
               <TableToolbar>
@@ -2414,9 +2485,9 @@ export function AdminReportsContent() {
               )}
             </TableBody>
           </Table>
-        ) : null}
+        ) : null} */}
 
-        {activeTab === "journal" && journalQuery.data?.pagination ? (
+        {/* {activeTab === "journal" && journalQuery.data?.pagination ? (
           <Pagination
             meta={toPaginationMeta(journalQuery.data.pagination)!}
             onPageChange={setJournalPage}
@@ -2426,7 +2497,7 @@ export function AdminReportsContent() {
             }}
             disabled={journalQuery.isFetching}
           />
-        ) : null}
+        ) : null} */}
 
         {activeTab === "monthly" ? (
           <div className="border border-light-border bg-light-surface p-4 dark:border-dark-border dark:bg-dark-surface">
@@ -2439,28 +2510,10 @@ export function AdminReportsContent() {
                   {t("admin.reports.monthly.description")}
                 </p>
               </div>
-              <div className="grid w-full gap-2 sm:grid-cols-2 lg:w-[24rem]">
-                <SelectField
-                  value={year}
-                  onValueChange={setYear}
-                  options={yearOptions}
-                  tone="light"
-                  clearable={false}
-                  className="min-h-10 w-full"
-                  contentClassName="z-[1500]"
-                />
-                <SelectField
-                  value={month}
-                  onValueChange={setMonth}
-                  options={monthOptions}
-                  tone="light"
-                  clearable={false}
-                  className="min-h-10 w-full"
-                  contentClassName="z-[1500]"
-                />
-              </div>
-              <div className="flex flex-wrap gap-2 lg:justify-end">
-                {/* Export buttons moved to header */}
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-light-muted dark:text-dark-muted">
+                <span>{selectedMonthRange.from}</span>
+                <span>-</span>
+                <span>{selectedMonthRange.to}</span>
               </div>
             </div>
 
@@ -2543,6 +2596,37 @@ export function AdminReportsContent() {
                   ))}
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+            <div className="mt-4 grid gap-2 border-t border-light-border pt-4 dark:border-dark-border sm:grid-cols-3">
+              <SelectField
+                value={year}
+                onValueChange={setYear}
+                options={yearOptions}
+                tone="light"
+                clearable={false}
+                className="min-h-10 w-full"
+                contentClassName="z-[1500]"
+              />
+              <SelectField
+                value={month}
+                onValueChange={setMonth}
+                options={monthOptions}
+                tone="light"
+                clearable={false}
+                className="min-h-10 w-full"
+                contentClassName="z-[1500]"
+              />
+              <SelectField
+                value={monthlyCurrency}
+                onValueChange={(value) =>
+                  setMonthlyCurrency(value as CurrencyCode | "all")
+                }
+                options={currencyOptions}
+                tone="light"
+                clearable={false}
+                className="min-h-10 w-full"
+                contentClassName="z-[1500]"
+              />
             </div>
           </div>
         ) : null}

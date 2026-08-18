@@ -69,7 +69,8 @@ type Props = {
 
 function money(value: string | number | undefined, currency?: string) {
   const parsed = Number(value ?? 0);
-  return `${Number.isFinite(parsed) ? parsed.toLocaleString() : "0"} ${currency ?? ""}`.trim();
+  const rounded = Math.round((parsed + Number.EPSILON) * 100) / 100;
+  return `${Number.isFinite(rounded) ? rounded.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "0"} ${currency ?? ""}`.trim();
 }
 
 function statusVariant(status: SaleStatus) {
