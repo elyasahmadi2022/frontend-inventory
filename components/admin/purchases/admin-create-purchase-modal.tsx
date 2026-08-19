@@ -22,6 +22,7 @@ import {
 } from "@/components/common";
 import { FormModal } from "@/components/common/form-modal";
 import { InputField } from "@/components/common/input-field";
+import { ToggleSwitch } from "@/components/common/toggle-switch";
 import {
   SelectField,
   type SelectOption,
@@ -112,7 +113,9 @@ const currencyOptions: SelectOption[] = [
 ];
 
 function money(value: number) {
-  return Number(value || 0).toLocaleString();
+  const amount = Number(value) || 0;
+  const rounded = Math.round((amount + Number.EPSILON) * 100) / 100;
+  return rounded.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function buildEmptyLine(locationId = ""): DraftLine {
@@ -187,6 +190,7 @@ export function AdminCreatePurchaseModal({
         vendorId: purchase.vendorId,
         billDate: purchase.billDate?.slice(0, 10) ?? getLocalDateString(),
         dueDate: purchase.dueDate?.slice(0, 10) ?? "",
+        isImportant: purchase.isImportant,
         currencyCode: purchase.currencyCode,
         exchangeRateToBase: 1,
         inventoryAccountId: "",
@@ -591,6 +595,20 @@ export function AdminCreatePurchaseModal({
         if (!submitting) onClose();
       }}
       onSubmit={() => void submit()}
+      footerContent={
+        <Controller
+          control={form.control}
+          name="isImportant"
+          render={({ field }) => (
+            <ToggleSwitch
+              id="purchase-is-important"
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              label={t("admin.purchases.form.important")}
+            />
+          )}
+        />
+      }
       panelClassName="max-w-6xl"
       contentClassName="!flex flex-col gap-1"
     >

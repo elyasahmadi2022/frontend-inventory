@@ -40,6 +40,7 @@ export type PurchaseRow = {
   vendorId: string;
   billDate: string;
   dueDate?: string | null;
+  isImportant: boolean;
   status: PurchaseStatus;
   currencyCode: CurrencyCode;
   subtotal: number | string;
@@ -84,6 +85,7 @@ export type SavePurchaseInput = {
   vendorId: string;
   billDate: string;
   dueDate?: string;
+  isImportant: boolean;
   currencyCode: CurrencyCode;
   exchangeRateToBase?: number;
   productExchangeRate?: number;
@@ -188,6 +190,7 @@ export type PurchasePaymentInput = {
   paymentAccountId?: string;
   paymentDate?: string;
   notes?: string;
+  paymentExchangeRate?: number;
 };
 
 export type PurchaseReturnLineInput = {

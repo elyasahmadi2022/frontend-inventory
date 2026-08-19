@@ -75,14 +75,14 @@ export function AdminDetailToolbar({
 }: AdminDetailToolbarProps) {
   const { t } = useI18n();
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 py-2 px-2 bg-white">
       <AdminDetailBackLink href={backHref} label={backLabel} />
       <div className="flex flex-wrap items-center gap-2">
         {onRefresh ? (
           <button
             type="button"
             onClick={onRefresh}
-            className="inline-flex items-center gap-1.5 border border-light-border bg-light-bg px-3 py-2 text-xs font-semibold text-light-text transition hover:bg-light-surface dark:border-dark-border dark:bg-dark-bg dark:text-dark-text dark:hover:bg-dark-surface"
+            className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
           >
             <RefreshCw className="size-3.5" />
             {t("common.refresh")}

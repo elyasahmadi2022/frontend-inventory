@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/lib/i18n";
 import {
   useMarkAllNotificationsReadMutation,
+  useAdminInventoryBalancesQuery,
   useMarkNotificationReadMutation,
   useNotificationsQuery,
 } from "@/lib/query/hooks";
@@ -57,17 +58,54 @@ export function DashboardNotificationMenu() {
     { page: 1, pageSize: 8 },
     authenticated,
   );
+  const inventoryBalancesQuery = useAdminInventoryBalancesQuery();
 
   const markRead = useMarkNotificationReadMutation();
   const markAllRead = useMarkAllNotificationsReadMutation();
 
   const notifications = notificationsData?.notifications ?? [];
-  const unreadCount = optimisticUnread ?? notificationsData?.unreadCount ?? 0;
-
+  const lowStockItems = useMemo(() => {
+    const products = new Map<
+      string,
+      { id: string; name: string; reorderLevel: number; quantity: number }
+    >();
+    (inventoryBalancesQuery.data ?? []).forEach((item) => {
+      if (!item.product?.id) return;
+      const current = products.get(item.product.id) ?? {
+        id: item.product.id,
+        name: item.product.name,
+        reorderLevel: Number(item.product.reorderLevel ?? 0),
+        quantity: 0,
+      };
+      current.quantity += Number(item.quantityOnHand ?? 0);
+      products.set(current.id, current);
+    });
+    return [...products.values()].filter(
+      (item) => item.reorderLevel > 0 && item.quantity <= item.reorderLevel,
+    );
+  }, [inventoryBalancesQuery.data]);
+  const unreadCount =
+    (optimisticUnread ?? notificationsData?.unreadCount ?? 0) +
+    lowStockItems.length;
 
   const menuItems = useMemo(
-    () => notifications.map((item) => toMenuItem(item, language)),
-    [language, notifications],
+    () => [
+      ...lowStockItems.map((item) => ({
+        id: `low-stock-${item.id}`,
+        title: t("admin.products.stats.lowStock"),
+        message: t("admin.notifications.lowStockMessage", {
+          product: item.name,
+          quantity: item.quantity,
+          reorderLevel: item.reorderLevel,
+        }),
+        timestamp: "",
+        read: false,
+        href: "/admin/products",
+        source: "owner" as const,
+      })),
+      ...notifications.map((item) => toMenuItem(item, language)),
+    ],
+    [language, lowStockItems, notifications, t],
   );
 
   const handleNotificationSelect = useCallback(

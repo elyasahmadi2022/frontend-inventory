@@ -6,6 +6,7 @@ import {
   buildAssetAccountOptions,
   renderAssetAccountOption,
 } from "@/components/admin/shared/asset-account-options";
+import { PAYMENT_CURRENCY_OPTIONS } from "@/components/admin/shared/payment-currency-options";
 import { FormModal } from "@/components/common/form-modal";
 import { MultiSelectField } from "@/components/common/multi-select-field";
 import { ToggleSwitch } from "@/components/common/toggle-switch";
@@ -20,7 +21,7 @@ import { ApiError } from "@/lib/api";
 import { getLocalDateString } from "@/lib/date-format";
 import { useI18n } from "@/lib/i18n";
 import { usePayAdminPurchaseMutation } from "@/lib/query/hooks";
-import type { AccountRow } from "@/services/accounts.service";
+import type { AccountRow, CurrencyCode } from "@/services/accounts.service";
 import type { PurchaseRow } from "@/services/purchases.service";
 
 type Props = {
@@ -45,6 +46,12 @@ export function AdminPurchasePaymentModal({
     0,
   );
   const [amount, setAmount] = useState(balance);
+  const [paymentCurrencyCode, setPaymentCurrencyCode] = useState<
+    CurrencyCode | ""
+  >("");
+  const [paymentExchangeRateInputs, setPaymentExchangeRateInputs] = useState<
+    Partial<Record<CurrencyCode, string>>
+  >({});
   const [paymentAccountId, setPaymentAccountId] = useState("");
   const [paymentDate, setPaymentDate] = useState(getLocalDateString);
   const [notes, setNotes] = useState("");
@@ -57,10 +64,9 @@ export function AdminPurchasePaymentModal({
       purchases.filter(
         (item) =>
           item.status !== "cancelled" &&
-          item.currencyCode === purchase?.currencyCode &&
           Number(item.total) - Number(item.paidTotal) > 0,
       ),
-    [purchase?.currencyCode, purchases],
+    [purchases],
   );
   const selectedPurchases = payablePurchases
     .filter((item) => selectedPurchaseIds.includes(item.id))
@@ -72,6 +78,50 @@ export function AdminPurchasePaymentModal({
     (sum, item) => sum + Number(item.total) - Number(item.paidTotal),
     0,
   );
+  const paymentTargets = payMultiple
+    ? selectedPurchases
+    : purchase
+      ? [purchase]
+      : [];
+  const selectedCurrencies = [
+    ...new Set(paymentTargets.map((item) => item.currencyCode)),
+  ];
+  const foreignCurrencies = selectedCurrencies.filter(
+    (currency) => currency !== paymentCurrencyCode,
+  );
+  const exchangeRateCurrencies = foreignCurrencies.length
+    ? ([
+        ...new Set(
+          [paymentCurrencyCode, ...selectedCurrencies].filter(
+            (currency): currency is CurrencyCode =>
+              Boolean(currency) && currency !== "USD",
+          ),
+        ),
+      ] as CurrencyCode[])
+    : [];
+  const selectedPurchasesUseOneCurrency = selectedCurrencies.length <= 1;
+  const hasRequiredExchangeRates = exchangeRateCurrencies.every(
+    (currency) => Number(paymentExchangeRateInputs[currency]) > 0,
+  );
+  const paymentRateToUsd =
+    paymentCurrencyCode === "USD"
+      ? 1
+      : Number(paymentExchangeRateInputs[paymentCurrencyCode as CurrencyCode]);
+  const totalPaymentAmount = hasRequiredExchangeRates
+    ? paymentTargets.reduce((sum, target) => {
+        const outstanding = Math.max(
+          Number(target.total) - Number(target.paidTotal),
+          0,
+        );
+        if (target.currencyCode === paymentCurrencyCode)
+          return sum + outstanding;
+        const documentRateToUsd =
+          target.currencyCode === "USD"
+            ? 1
+            : Number(paymentExchangeRateInputs[target.currencyCode]);
+        return sum + outstanding * (paymentRateToUsd / documentRateToUsd);
+      }, 0)
+    : 0;
 
   useEffect(() => {
     if (!open || !purchase) return;
@@ -79,15 +129,15 @@ export function AdminPurchasePaymentModal({
       setAmount(
         Math.max(Number(purchase.total) - Number(purchase.paidTotal), 0),
       );
+      setPaymentCurrencyCode(purchase.currencyCode);
+      setPaymentExchangeRateInputs({});
       setPaymentAccountId("");
       setPaymentDate(getLocalDateString());
       setNotes("");
       setPayMultiple(false);
-      setSelectedPurchaseIds(purchase ? [purchase.id] : []);
+      setSelectedPurchaseIds([purchase.id]);
       setMultipleAmount(
-        purchase
-          ? Math.max(Number(purchase.total) - Number(purchase.paidTotal), 0)
-          : 0,
+        Math.max(Number(purchase.total) - Number(purchase.paidTotal), 0),
       );
     });
     return () => cancelAnimationFrame(frame);
@@ -97,36 +147,44 @@ export function AdminPurchasePaymentModal({
     () => new Map(accounts.map((account) => [account.id, account])),
     [accounts],
   );
-  const purchaseCurrencyCode = purchase?.currencyCode;
   const accountOptions = useMemo<SelectOption[]>(
     () =>
-      purchaseCurrencyCode
-        ? buildAssetAccountOptions(accounts, purchaseCurrencyCode, language)
+      paymentCurrencyCode
+        ? buildAssetAccountOptions(accounts, paymentCurrencyCode, language)
         : [],
-    [accounts, language, purchaseCurrencyCode],
+    [accounts, language, paymentCurrencyCode],
   );
 
   const handleSubmit = async () => {
     if (!purchase) return;
-    const paymentTargets = payMultiple ? selectedPurchases : [purchase];
-    const paymentAmount = payMultiple ? multipleAmount : amount;
     if (payMultiple && paymentTargets.length === 0) {
       gooeyToast.error(t("admin.purchases.pay.errorTitle"), {
         description: t("admin.purchases.pay.validation.selectBills"),
       });
       return;
     }
-    if (!(paymentAmount > 0)) {
+    if (!((payMultiple ? multipleAmount : amount) > 0)) {
       gooeyToast.error(t("admin.purchases.pay.errorTitle"), {
         description: t("admin.purchases.pay.validation.amountRequired"),
       });
       return;
     }
-    if (paymentAmount > (payMultiple ? totalSelectedAmount : balance)) {
+    if (
+      (payMultiple ? multipleAmount : amount) >
+      (payMultiple ? totalPaymentAmount : balance)
+    ) {
       gooeyToast.error(t("admin.purchases.pay.errorTitle"), {
         description: t("admin.purchases.pay.validation.amountTooHigh"),
       });
       return;
+    }
+    for (const currency of exchangeRateCurrencies) {
+      if (!(Number(paymentExchangeRateInputs[currency]) > 0)) {
+        gooeyToast.error(t("admin.purchases.pay.errorTitle"), {
+          description: t("admin.purchases.pay.validation.exchangeRate"),
+        });
+        return;
+      }
     }
     if (!paymentAccountId) {
       gooeyToast.error(t("admin.purchases.pay.errorTitle"), {
@@ -136,15 +194,32 @@ export function AdminPurchasePaymentModal({
     }
 
     try {
-      let remainingAmount = paymentAmount;
+      let remainingAmount = payMultiple ? multipleAmount : amount;
       for (const target of paymentTargets) {
+        const paymentPerDocument =
+          target.currencyCode === paymentCurrencyCode
+            ? 1
+            : (paymentCurrencyCode === "USD"
+                ? 1
+                : Number(
+                    paymentExchangeRateInputs[
+                      paymentCurrencyCode as CurrencyCode
+                    ],
+                  )) /
+              (target.currencyCode === "USD"
+                ? 1
+                : Number(paymentExchangeRateInputs[target.currencyCode]));
         const targetAmount = payMultiple
           ? Math.min(
               Math.max(Number(target.total) - Number(target.paidTotal), 0),
-              remainingAmount,
+              remainingAmount / paymentPerDocument,
             )
           : amount;
         if (!(targetAmount > 0)) continue;
+        const paymentExchangeRateValue =
+          target.currencyCode === paymentCurrencyCode
+            ? undefined
+            : paymentPerDocument;
         await mutation.mutateAsync({
           id: target.id,
           input: {
@@ -152,9 +227,10 @@ export function AdminPurchasePaymentModal({
             paymentAccountId,
             paymentDate,
             notes: notes.trim() || undefined,
+            paymentExchangeRate: paymentExchangeRateValue,
           },
         });
-        remainingAmount -= targetAmount;
+        if (payMultiple) remainingAmount -= targetAmount * paymentPerDocument;
       }
       gooeyToast.success(t("admin.purchases.pay.successTitle"), {
         description: t("admin.purchases.pay.successDescription", {
@@ -177,12 +253,17 @@ export function AdminPurchasePaymentModal({
       open={open}
       title={t("admin.purchases.pay.title")}
       description={
-        purchase
-          ? t("admin.purchases.pay.description", {
+        purchase ? (
+          <>
+            {t("admin.purchases.pay.description", {
               number: purchase.number,
               currency: purchase.currencyCode,
-            })
-          : undefined
+            })}{" "}
+            <span className="font-semibold text-rose-700 dark:text-rose-400">
+              {balance.toLocaleString()} {purchase.currencyCode}
+            </span>
+          </>
+        ) : undefined
       }
       onClose={onClose}
       onSubmit={() => void handleSubmit()}
@@ -192,10 +273,43 @@ export function AdminPurchasePaymentModal({
       cancelLabel={t("admin.purchases.pay.cancel")}
       closeLabel={t("admin.purchases.pay.close")}
     >
-      <p className="text-sm col-span-2 font-semibold text-green-700">
-        {t("admin.purchases.pay.remainingAfterPayment")}: {Math.max((payMultiple ? totalSelectedAmount - multipleAmount : balance - amount), 0).toLocaleString()}{" "}
-        {purchase?.currencyCode}
-      </p>
+      <div className="col-span-2 order-40">
+        <SelectField
+          label={t("admin.purchases.pay.paymentCurrency")}
+          options={PAYMENT_CURRENCY_OPTIONS}
+          value={paymentCurrencyCode}
+          onValueChange={(value) => {
+            const currency = value as CurrencyCode;
+            const matchingPurchases = payablePurchases.filter(
+              (item) => item.currencyCode === currency,
+            );
+            const total = matchingPurchases.reduce(
+              (sum, item) => sum + Number(item.total) - Number(item.paidTotal),
+              0,
+            );
+            setPaymentCurrencyCode(currency);
+            setPaymentExchangeRateInputs({});
+            setPaymentAccountId("");
+            setSelectedPurchaseIds(matchingPurchases.map((item) => item.id));
+            setMultipleAmount(total);
+            if (!payMultiple) setAmount(balance);
+          }}
+          tone="light"
+          clearable={false}
+        />
+      </div>
+      {!(payMultiple && !selectedPurchasesUseOneCurrency) ? (
+        <p className="col-span-2 text-sm font-semibold text-green-700 dark:text-green-400">
+          {t("admin.purchases.pay.remainingAfterPayment")}:{" "}
+          {Math.max(
+            payMultiple
+              ? totalSelectedAmount - multipleAmount
+              : balance - amount,
+            0,
+          ).toLocaleString()}{" "}
+          {selectedCurrencies[0] ?? purchase?.currencyCode}
+        </p>
+      ) : null}
       {payablePurchases.length > 1 ? (
         <div className="col-span-2">
           <ToggleSwitch
@@ -203,7 +317,21 @@ export function AdminPurchasePaymentModal({
             checked={payMultiple}
             onCheckedChange={(checked) => {
               setPayMultiple(checked);
-              if (checked) setMultipleAmount(totalSelectedAmount);
+              if (checked) {
+                const matchingPurchases = payablePurchases.filter(
+                  (item) => item.currencyCode === paymentCurrencyCode,
+                );
+                setSelectedPurchaseIds(
+                  matchingPurchases.map((item) => item.id),
+                );
+                setMultipleAmount(
+                  matchingPurchases.reduce(
+                    (sum, item) =>
+                      sum + Number(item.total) - Number(item.paidTotal),
+                    0,
+                  ),
+                );
+              }
             }}
             label={t("admin.purchases.pay.multiple")}
           />
@@ -211,41 +339,59 @@ export function AdminPurchasePaymentModal({
       ) : null}
       {payMultiple ? (
         <>
-          <MultiSelectField
-            className="col-span-2"
-            label={t("admin.purchases.pay.selectBills")}
-            options={payablePurchases.map((item) => ({
-              value: item.id,
-              label: `${item.number} — ${Math.max(Number(item.total) - Number(item.paidTotal), 0).toLocaleString()} ${item.currencyCode}`,
-            }))}
-            value={selectedPurchaseIds}
-            onValueChange={(nextIds) => {
-              setSelectedPurchaseIds(nextIds);
-              setMultipleAmount(
-                payablePurchases
-                  .filter((item) => nextIds.includes(item.id))
+          <div className="col-span-2 w-full">
+            <MultiSelectField
+              className="w-full"
+              label={t("admin.purchases.pay.selectBills")}
+              options={payablePurchases.map((item) => ({
+                value: item.id,
+                label: `${item.number} — ${Math.max(Number(item.total) - Number(item.paidTotal), 0).toLocaleString()} ${item.currencyCode}`,
+              }))}
+              value={selectedPurchaseIds}
+              onValueChange={(nextIds) => {
+                setSelectedPurchaseIds(nextIds);
+                setMultipleAmount(
+                  payablePurchases
+                    .filter((item) => nextIds.includes(item.id))
+                    .reduce(
+                      (sum, item) =>
+                        sum + Number(item.total) - Number(item.paidTotal),
+                      0,
+                    ),
+                );
+              }}
+              tone="light"
+            />
+          </div>
+          <p className="col-span-2 text-sm font-semibold text-red-700 dark:text-red-400">
+            {t("admin.purchases.pay.totalSelected")}:{" "}
+            {selectedCurrencies
+              .map((currency) => {
+                const total = selectedPurchases
+                  .filter((item) => item.currencyCode === currency)
                   .reduce(
                     (sum, item) =>
                       sum + Number(item.total) - Number(item.paidTotal),
                     0,
-                  ),
-              );
-            }}
-            tone="light"
-          />
-          <p className="col-span-2 text-sm font-semibold text-red-700 dark:text-red-400">
-            {t("admin.purchases.pay.totalSelected")}: {totalSelectedAmount.toLocaleString()} {purchase?.currencyCode}
+                  );
+                return `${total.toLocaleString()} ${currency}`;
+              })
+              .join(" · ")}
           </p>
           <InputField
             containerClassName="col-span-2"
             id="purchase-pay-multiple-amount"
-            label={t("admin.purchases.pay.amount")}
+            label={`${t("admin.purchases.pay.amount")} (${paymentCurrencyCode})`}
             type="number"
             min={0}
-            max={totalSelectedAmount}
+            max={
+              selectedPurchasesUseOneCurrency ? totalSelectedAmount : undefined
+            }
             step="0.01"
             value={multipleAmount}
-            onChange={(event) => setMultipleAmount(Number(event.target.value) || 0)}
+            onChange={(event) =>
+              setMultipleAmount(Number(event.target.value) || 0)
+            }
             tone="light"
           />
         </>
@@ -262,6 +408,33 @@ export function AdminPurchasePaymentModal({
           tone="light"
         />
       )}
+      {exchangeRateCurrencies.map((currency) => {
+        const rate = Number(paymentExchangeRateInputs[currency]);
+        return (
+          <div className="col-span-2" key={currency}>
+            <InputField
+              id={`purchase-pay-exchange-rate-${currency}`}
+              label={`1 USD = ? ${currency}`}
+              type="number"
+              min={0.000001}
+              step="0.000001"
+              value={paymentExchangeRateInputs[currency] ?? ""}
+              onChange={(event) =>
+                setPaymentExchangeRateInputs((current) => ({
+                  ...current,
+                  [currency]: event.target.value,
+                }))
+              }
+              tone="light"
+            />
+            {rate > 0 ? (
+              <p className="mt-1 text-sm text-light-muted dark:text-dark-muted">
+                Enter how many {currency} equal one US dollar.
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
       <div className="col-span-2">
         <SelectField
           label={t("admin.purchases.pay.account")}
@@ -269,11 +442,11 @@ export function AdminPurchasePaymentModal({
           value={paymentAccountId}
           onValueChange={setPaymentAccountId}
           renderOption={(option) =>
-            purchase?.currencyCode
+            paymentCurrencyCode
               ? renderAssetAccountOption(
                   option,
                   accountById,
-                  purchase.currencyCode,
+                  paymentCurrencyCode,
                   language,
                 )
               : option.label
@@ -282,7 +455,7 @@ export function AdminPurchasePaymentModal({
         />
       </div>
       <DatePickerField
-        containerClassName="col-span-2"
+        containerClassName="col-span-2 order-50"
         id="purchase-pay-date"
         label={t("admin.purchases.pay.date")}
         value={paymentDate}
@@ -290,7 +463,7 @@ export function AdminPurchasePaymentModal({
         tone="light"
       />
       <TextareaField
-        containerClassName="col-span-2"
+        containerClassName="col-span-2 order-60"
         id="purchase-pay-notes"
         label={t("admin.purchases.pay.notes")}
         value={notes}

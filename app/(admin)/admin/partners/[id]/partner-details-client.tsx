@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQueries } from "@tanstack/react-query";
 import {
   Banknote,
@@ -8,6 +8,7 @@ import {
   ChevronUp,
   Landmark,
   ReceiptText,
+  Search,
   Users,
   WalletCards,
 } from "lucide-react";
@@ -21,8 +22,11 @@ import {
 } from "@/components/admin/admin-detail-layout";
 import { AdminKpiCard } from "@/components/admin/dashboard/dashboard-panel";
 import { AdminPurchasePaymentModal } from "@/components/admin/purchases/admin-purchase-payment-modal";
+import { AdminJournalEntryModal } from "@/components/admin/journals/admin-journal-entry-modal";
 import { AdminSalePaymentModal } from "@/components/admin/sales/admin-sale-payment-modal";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
+import { InputField } from "@/components/common/input-field";
+import { SelectField } from "@/components/common/select-field";
 import StatusPill from "@/components/common/status-pill";
 import Table from "@/components/common/table";
 import TableBody from "@/components/common/table-body";
@@ -141,8 +145,8 @@ function MoneyText({
         tone === "settled"
           ? "font-semibold text-sky-700 dark:text-sky-400"
           : tone === "incoming"
-            ? "font-semibold text-emerald-700 dark:text-emerald-400"
-            : "font-semibold text-red-700 dark:text-red-400"
+            ? "font-semibold text-red-700 dark:text-emerald-400"
+            : "font-semibold text-emerald-700 dark:text-red-400"
       }
     >
       {children}
@@ -307,9 +311,17 @@ export function AdminPartnerDetailsContent({
   const { t } = useI18n();
   const [salePaymentOpen, setSalePaymentOpen] = useState(false);
   const [purchasePaymentOpen, setPurchasePaymentOpen] = useState(false);
+  const [journalPaymentOpen, setJournalPaymentOpen] = useState(false);
+  const [journalPaymentType, setJournalPaymentType] = useState<
+    "customer" | "vendor"
+  >("customer");
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(
     !collapsibleTransactionHistory,
   );
+  const [activitySearch, setActivitySearch] = useState("");
+  const [activityPaymentStatus, setActivityPaymentStatus] = useState<
+    "all" | "paid" | "unpaid" | "partial"
+  >("all");
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const contextBackHref =
@@ -397,6 +409,7 @@ export function AdminPartnerDetailsContent({
       date: sale.invoiceDate,
       total: sale.total,
       paidTotal: sale.paidTotal,
+      description: sale.notes ?? "",
       currencyCode: sale.currencyCode,
       products: productNamesByDocument.get(`sale-${sale.number}`) ?? "",
     })),
@@ -406,10 +419,43 @@ export function AdminPartnerDetailsContent({
       date: purchase.billDate,
       total: purchase.total,
       paidTotal: purchase.paidTotal,
+      description: purchase.notes ?? "",
       currencyCode: purchase.currencyCode,
       products: productNamesByDocument.get(`purchase-${purchase.number}`) ?? "",
     })),
   ].sort((a, b) => parseDate(b.date) - parseDate(a.date));
+  const filteredTradeRows = useMemo(() => {
+    const query = activitySearch.trim().toLocaleLowerCase();
+    return tradeRows.filter((row) => {
+      const total = Number(row.total);
+      const paid = Number(row.paidTotal);
+      const paymentStatus =
+        paid >= total ? "paid" : paid <= 0 ? "unpaid" : "partial";
+      if (
+        activityPaymentStatus !== "all" &&
+        paymentStatus !== activityPaymentStatus
+      ) {
+        return false;
+      }
+      if (!query) return true;
+      return [
+        row.number,
+        row.products,
+        row.description,
+        row.date,
+        formatAdminDate(row.date),
+        row.kind === "sale"
+          ? t("admin.partners.details.activitySale")
+          : t("admin.partners.details.activityPurchase"),
+        money(row.total, row.currencyCode),
+        money(row.paidTotal, row.currencyCode),
+        money(Number(row.total) - Number(row.paidTotal), row.currencyCode),
+      ]
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(query);
+    });
+  }, [activityPaymentStatus, activitySearch, t, tradeRows]);
   const journals = journalsQuery.data?.items ?? [];
   const outstandingSale = sales.find(
     (sale) =>
@@ -421,23 +467,40 @@ export function AdminPartnerDetailsContent({
       purchase.status !== "cancelled" &&
       Number(purchase.total) - Number(purchase.paidTotal) > 0,
   );
+  const isCustomer = partner?.type === "customer" || partner?.type === "both";
+  const isVendor = partner?.type === "vendor" || partner?.type === "both";
   const partnerPaymentActions = (
     <>
-      {outstandingSale ? (
+      {isCustomer ? (
         <button
+          title={t("admin.sales.action.receivePayment")}
           type="button"
-          onClick={() => setSalePaymentOpen(true)}
+          onClick={() => {
+            if (outstandingSale) {
+              setSalePaymentOpen(true);
+              return;
+            }
+            setJournalPaymentType("customer");
+            setJournalPaymentOpen(true);
+          }}
           className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
         >
           <Banknote className="size-4" />
           {t("admin.sales.action.receivePayment")}
         </button>
       ) : null}
-      {outstandingPurchase ? (
+      {isVendor ? (
         <button
           type="button"
-          onClick={() => setPurchasePaymentOpen(true)}
-          className="inline-flex min-h-9 items-center gap-2 border border-primary-500/30 bg-light-surface px-3 text-xs font-semibold text-primary-600 transition hover:bg-primary-50 dark:bg-dark-surface dark:text-primary-500 dark:hover:bg-primary-500/10"
+          onClick={() => {
+            if (outstandingPurchase) {
+              setPurchasePaymentOpen(true);
+              return;
+            }
+            setJournalPaymentType("vendor");
+            setJournalPaymentOpen(true);
+          }}
+          className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
         >
           <Banknote className="size-4" />
           {t("admin.purchases.action.pay")}
@@ -445,8 +508,6 @@ export function AdminPartnerDetailsContent({
       ) : null}
     </>
   );
-  const isCustomer = partner?.type === "customer" || partner?.type === "both";
-  const isVendor = partner?.type === "vendor" || partner?.type === "both";
   const summaryCards = [
     ...(isCustomer
       ? [
@@ -510,6 +571,13 @@ export function AdminPartnerDetailsContent({
         purchases={purchases}
         onClose={() => setPurchasePaymentOpen(false)}
       />
+      <AdminJournalEntryModal
+        open={journalPaymentOpen}
+        initialPartnerId={partnerId}
+        initialPartnerType={journalPaymentType}
+        onClose={() => setJournalPaymentOpen(false)}
+      />
+      
       <AdminDetailToolbar
         backHref={backHref}
         backLabel={backLabel}
@@ -534,85 +602,123 @@ export function AdminPartnerDetailsContent({
         ))}
       </div>
 
-      <AdminDetailSection
-        title={partner?.name ?? t("admin.partners.details.title")}
-        description={t("admin.partners.details.description")}
-      >
-        <DetailSummaryTable
-          rows={[
-            {
-              label: t("admin.partners.column.code"),
-              value: partner?.code ?? "-",
-            },
-            {
-              label: t("admin.partners.column.type"),
-              value: t(
-                `admin.partners.type.${partner?.type ?? "customer"}` as never,
-              ),
-            },
-            {
-              label: t("admin.partners.column.status"),
-              value: (
-                <StatusPill
-                  label={
-                    partner?.isActive
-                      ? t("admin.partners.status.active")
-                      : t("admin.partners.status.inactive")
-                  }
-                  variant={partner?.isActive ? "success" : "neutral"}
-                />
-              ),
-            },
-            {
-              label: t("admin.partners.column.phone"),
-              value: partner?.phone ?? "-",
-            },
-            {
-              label: t("admin.partners.column.address"),
-              value: partner?.address ?? "-",
-            },
-            {
-              label: t("admin.partners.details.ledgerAccounts"),
-              value: partner?.ledgerAccounts?.length ?? 0,
-            },
-            {
-              label: t("admin.partners.details.receivableAccount"),
-              value: partner?.receivableAccount?.name ?? "-",
-            },
-            {
-              label: t("admin.partners.details.payableAccount"),
-              value: partner?.payableAccount?.name ?? "-",
-            },
-            {
-              label: t("admin.partners.details.currencyAccounts"),
-              value:
-                (partner?.ledgerAccounts ?? [])
-                  .map((item) => `${item.currencyCode} ${item.type}`)
-                  .join(", ") || "-",
-            },
-          ]}
-        />
-      </AdminDetailSection>
 
       <AdminDetailSection
-        title={t("admin.partners.details.accountBalances")}
-        description={t("admin.partners.details.accountBalancesDescription")}
+        title={t("admin.partners.details.recentActivity")}
+        description={t("admin.partners.details.recentActivityDescription")}
       >
-        <BalanceTable
-          items={[
-            {
-              label: t("admin.partners.details.receivableSection"),
-              rows: receivableRows,
-              tone: "incoming",
-            },
-            {
-              label: t("admin.partners.details.payableSection"),
-              rows: payableRows,
-              tone: "outgoing",
-            },
-          ]}
-          t={t}
-        />
+        <div className="mb-3 grid gap-3 md:grid-cols-2">
+          <InputField
+            value={activitySearch}
+            onChange={(event) => setActivitySearch(event.target.value)}
+            placeholder={t("admin.partners.details.activitySearchPlaceholder")}
+            startIcon={<Search className="size-4" />}
+            tone="light"
+          />
+          <SelectField
+            options={[
+              { value: "all", label: t("admin.partners.action.allPayment") },
+              { value: "paid", label: t("admin.partners.action.paid") },
+              { value: "unpaid", label: t("admin.partners.action.unpaid") },
+              { value: "partial", label: t("admin.partners.action.partial") },
+            ]}
+            value={activityPaymentStatus}
+            onValueChange={(value) =>
+              setActivityPaymentStatus(
+                value as "all" | "paid" | "unpaid" | "partial",
+              )
+            }
+            tone="light"
+            clearable={false}
+          />
+        </div>
+        <Table>
+          <TableHeader
+            headerData={[
+              { title: t("admin.partners.details.activityType") },
+              { title: t("admin.partners.details.activityDocument") },
+              { title: "Description" },
+              { title: t("admin.reports.column.date") },
+              {
+                title: t("admin.reports.column.totalAmount"),
+                align: "end" as const,
+              },
+              {
+                title: t("admin.reports.column.balance"),
+                align: "end" as const,
+              },
+              {
+                title: t("admin.partners.details.unpaidAmount"),
+                align: "end" as const,
+              },
+            ]}
+          />
+          <TableBody>
+            {filteredTradeRows.length === 0 ? (
+              <DataTableEmptyState
+                colSpan={7}
+                title={t("admin.partners.details.emptyActivity")}
+              />
+            ) : (
+              filteredTradeRows.map((row) => (
+                <TableRow key={`${row.kind}-${row.number}-${row.date}`}>
+                  <TableColumn>
+                    <TypePill
+                      tone={row.kind === "sale" ? "incoming" : "outgoing"}
+                      label={
+                        row.kind === "sale"
+                          ? t("admin.partners.details.activitySale")
+                          : t("admin.partners.details.activityPurchase")
+                      }
+                    />
+                  </TableColumn>
+                  <TableColumn nowrap={false}>
+                    <Link
+                      href={`/admin/${row.kind === "sale" ? "sales" : "purchases"}/${encodeURIComponent(row.number)}/details`}
+                      className="font-mono text-xs font-semibold text-primary-600 hover:underline dark:text-primary-500"
+                    >
+                      {row.number}
+                    </Link>
+                  </TableColumn>
+                  <TableColumn nowrap={false}>
+                    <p className="font-medium">
+                      {row.kind === "sale"
+                        ? t("admin.partners.details.activitySale")
+                        : t("admin.partners.details.activityPurchase")}
+                    </p>
+                    <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
+                      {row.products || row.description || "-"}
+                    </p>
+                    {row.products && row.description ? (
+                      <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
+                        {row.description}
+                      </p>
+                    ) : null}
+                  </TableColumn>
+                  <TableColumn>{formatAdminDate(row.date)}</TableColumn>
+                  <TableColumn className="">
+                    {money(row.total, row.currencyCode)}
+                  </TableColumn>
+                  <TableColumn className="">
+                    <MoneyText tone="settled">
+                      {money(row.paidTotal, row.currencyCode)}
+                    </MoneyText>
+                  </TableColumn>
+                  <TableColumn className="">
+                    <MoneyText
+                      tone={row.kind === "sale" ? "incoming" : "outgoing"}
+                    >
+                      {money(
+                        Number(row.total) - Number(row.paidTotal),
+                        row.currencyCode,
+                      )}
+                    </MoneyText>
+                  </TableColumn>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
       </AdminDetailSection>
 
       <AdminDetailSection
@@ -677,76 +783,90 @@ export function AdminPartnerDetailsContent({
         ) : null}
       </AdminDetailSection>
 
+
       <AdminDetailSection
-        title={t("admin.partners.details.recentActivity")}
-        description={t("admin.partners.details.recentActivityDescription")}
+        title={t("admin.partners.details.accountBalances")}
+        description={t("admin.partners.details.accountBalancesDescription")}
       >
-        <Table>
-          <TableHeader
-            headerData={[
-              { title: t("admin.partners.details.activityType") },
-              { title: t("admin.partners.details.activityDocument") },
-              { title: t("admin.reports.column.date") },
-              {
-                title: t("admin.reports.column.totalAmount"),
-                align: "end" as const,
-              },
-              {
-                title: t("admin.reports.column.balance"),
-                align: "end" as const,
-              },
-            ]}
-          />
-          <TableBody>
-            {tradeRows.length === 0 ? (
-              <DataTableEmptyState
-                colSpan={5}
-                title={t("admin.partners.details.emptyActivity")}
-              />
-            ) : (
-              tradeRows.map((row) => (
-                <TableRow key={`${row.kind}-${row.number}-${row.date}`}>
-                  <TableColumn>
-                    <TypePill
-                      tone={row.kind === "sale" ? "incoming" : "outgoing"}
-                      label={
-                        row.kind === "sale"
-                          ? t("admin.partners.details.activitySale")
-                          : t("admin.partners.details.activityPurchase")
-                      }
-                    />
-                  </TableColumn>
-                  <TableColumn nowrap={false}>
-                    <Link
-                      href={`/admin/${row.kind === "sale" ? "sales" : "purchases"}/${encodeURIComponent(row.number)}/details`}
-                      className="font-mono text-xs font-semibold text-primary-600 hover:underline dark:text-primary-500"
-                    >
-                      {row.number}
-                    </Link>
-                    <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
-                      {row.products || "-"}
-                    </p>
-                  </TableColumn>
-                  <TableColumn>{formatAdminDate(row.date)}</TableColumn>
-                  <TableColumn className="">
-                    {money(row.total, row.currencyCode)}
-                  </TableColumn>
-                  <TableColumn className="">
-                    <MoneyText
-                      tone={row.kind === "sale" ? "incoming" : "outgoing"}
-                    >
-                      {money(
-                        Number(row.total) - Number(row.paidTotal),
-                        row.currencyCode,
-                      )}
-                    </MoneyText>
-                  </TableColumn>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <BalanceTable
+          items={[
+            {
+              label: t("admin.partners.details.receivableSection"),
+              rows: receivableRows,
+              tone: "incoming",
+            },
+            {
+              label: t("admin.partners.details.payableSection"),
+              rows: payableRows,
+              tone: "outgoing",
+            },
+          ]}
+          t={t}
+        />
       </AdminDetailSection>
+
+
+      
+      <AdminDetailSection
+        title={partner?.name ?? t("admin.partners.details.title")}
+        description={t("admin.partners.details.description")}
+      >
+        <DetailSummaryTable
+          rows={[
+            {
+              label: t("admin.partners.column.code"),
+              value: partner?.code ?? "-",
+            },
+            {
+              label: t("admin.partners.column.type"),
+              value: t(
+                `admin.partners.type.${partner?.type ?? "customer"}` as never,
+              ),
+            },
+            {
+              label: t("admin.partners.column.status"),
+              value: (
+                <StatusPill
+                  label={
+                    partner?.isActive
+                      ? t("admin.partners.status.active")
+                      : t("admin.partners.status.inactive")
+                  }
+                  variant={partner?.isActive ? "success" : "neutral"}
+                />
+              ),
+            },
+            {
+              label: t("admin.partners.column.phone"),
+              value: partner?.phone ?? "-",
+            },
+            {
+              label: t("admin.partners.column.address"),
+              value: partner?.address ?? "-",
+            },
+            {
+              label: t("admin.partners.details.ledgerAccounts"),
+              value: partner?.ledgerAccounts?.length ?? 0,
+            },
+            {
+              label: t("admin.partners.details.receivableAccount"),
+              value: partner?.receivableAccount?.name ?? "-",
+            },
+            {
+              label: t("admin.partners.details.payableAccount"),
+              value: partner?.payableAccount?.name ?? "-",
+            },
+            {
+              label: t("admin.partners.details.currencyAccounts"),
+              value:
+                (partner?.ledgerAccounts ?? [])
+                  .map((item) => `${item.currencyCode} ${item.type}`)
+                  .join(", ") || "-",
+            },
+          ]}
+        />
+      </AdminDetailSection>
+
 
       <AdminDetailSection
         title={t("admin.partners.details.paymentsAndLedger")}

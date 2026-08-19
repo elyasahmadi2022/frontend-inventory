@@ -8,7 +8,7 @@ import { LoaderMini } from "@/components/common/loader-mini";
 type FormModalProps = {
   open: boolean;
   title: string;
-  description?: string;
+  description?: ReactNode;
   children: ReactNode;
   onClose: () => void;
   onSubmit: () => void;

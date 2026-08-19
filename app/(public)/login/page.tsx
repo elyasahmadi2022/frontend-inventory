@@ -187,32 +187,6 @@ export default function LoginPage() {
               <div className=" absolute inset-0 -z-2 w-full h-full ">
                   <Lottie animationData={OwnerLogin} className=" w-full h-full" />
               </div>
-              <div>
-              
-                <p className="mt-10 text-xs font-semibold uppercase tracking-[0.2em] text-primary-600 dark:text-primary-500">
-                  {t("login.eyebrow")}
-                </p>
-                <h2 className="mt-3 text-3xl font-semibold leading-tight text-light-text dark:text-dark-text">
-                  {t("login.sideTitle")}
-                </h2>
-                <p className="mt-4 text-sm leading-7 text-light-muted dark:text-dark-muted">
-                  {t("login.sideDescription")}
-                </p>
-              </div>
-
-              <ul className="mt-10 space-y-3">
-                {features.map((feature) => (
-                  <li
-                    key={feature}
-                    className="flex items-center gap-3 text-sm text-light-text dark:text-dark-text"
-                  >
-                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-none bg-primary-50 text-primary-600 dark:bg-primary-500/10 dark:text-primary-500">
-                      <CheckIcon />
-                    </span>
-                    <span>{feature}</span>
-                  </li>
-                ))}
-              </ul>
             </aside>
 
             <div className="p-6 sm:p-8 lg:p-12">
@@ -223,9 +197,7 @@ export default function LoginPage() {
               <h1 className="mt-2 text-3xl font-semibold tracking-tight text-light-text dark:text-dark-text">
                 {t("login.title")}
               </h1>
-              <p className="mt-2 max-w-lg text-sm leading-6 text-light-muted dark:text-dark-muted">
-                {t("login.description")}
-              </p>
+             
 
               <form onSubmit={onSubmit} className="mt-8 space-y-5" noValidate>
                 <FormInputField

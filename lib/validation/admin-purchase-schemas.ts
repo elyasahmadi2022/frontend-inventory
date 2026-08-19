@@ -26,6 +26,7 @@ export function createAdminPurchaseSchema(t: T) {
         .trim()
         .min(1, t("admin.purchases.validation.billDateRequired")),
       dueDate: optionalText,
+      isImportant: z.boolean().default(false),
       currencyCode: z.enum(["AFN", "USD", "PKR"]),
       exchangeRateToBase: positiveNumber(t).default(1),
       inventoryAccountId: optionalText,
@@ -78,6 +79,7 @@ export const adminPurchaseDefaultValues: AdminPurchaseFormValues = {
   vendorId: "",
   billDate: getLocalDateString(),
   dueDate: "",
+  isImportant: false,
   currencyCode: "AFN",
   exchangeRateToBase: 1,
   inventoryAccountId: "",

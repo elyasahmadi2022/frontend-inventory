@@ -9,6 +9,7 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  Star,
   Trash2,
 } from "lucide-react";
 import { gooeyToast } from "goey-toast";
@@ -195,11 +196,18 @@ export function AdminPurchasesTable({
         .includes(query),
     );
   }, [debouncedSearch, items]);
-  const { sortKey, sortDirection, sortedItems, onSortChange } = useTableSort(
-    filteredItems,
-    purchaseSortAccessors,
-    "date",
-    "desc",
+  const {
+    sortKey,
+    sortDirection,
+    sortedItems: sortedRows,
+    onSortChange,
+  } = useTableSort(filteredItems, purchaseSortAccessors, "date", "desc");
+  const sortedItems = useMemo(
+    () =>
+      [...sortedRows].sort(
+        (left, right) => Number(right.isImportant) - Number(left.isImportant),
+      ),
+    [sortedRows],
   );
 
   const handleConfirmDelete = async () => {
@@ -409,7 +417,13 @@ export function AdminPurchasesTable({
                     className={compactRows ? "[&_td]:py-2" : undefined}
                   >
                     <TableColumn>
-                      <span className="font-mono text-xs font-semibold">
+                      <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold">
+                        {row.isImportant ? (
+                          <Star
+                            className="size-4 fill-amber-400 text-amber-500"
+                            aria-label={t("admin.purchases.form.important")}
+                          />
+                        ) : null}
                         {row.number}
                       </span>
                     </TableColumn>

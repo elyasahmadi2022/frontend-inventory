@@ -35,13 +35,14 @@ import {
   Plus,
   TrendingDown,
   TrendingUp,
+  SearchIcon,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 const today = getLocalDateString();
 const monthStart = toIsoDate(
-  new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  new Date(today),
 );
 
 function absoluteNumberLabel(value: string | number | null | undefined) {
@@ -183,7 +184,7 @@ function SimpleJournalPartner({ lines }: { lines?: JournalLineRow[] }) {
 function SimpleJournalAmount({ lines }: { lines?: JournalLineRow[] }) {
   const { t } = useI18n();
   const { amount, direction } = journalPaymentDetails(lines);
-  if (!direction || amount === "-") return <span>-</span>;
+  if (!direction || amount === "-") return <span>{t("admin.journals.entry.debit")}</span>;
   const isReceipt = direction === "receive";
 
   return (
@@ -323,13 +324,9 @@ export function AdminJournalsContent() {
   );
   const sourceOptions = [
     "all",
-    "manual",
     "sale",
     "purchase",
     "payment",
-    "money_transfer",
-    "inventory_adjustment",
-    "opening_balance",
   ].map((value) => ({
     value,
     label:
@@ -425,28 +422,10 @@ export function AdminJournalsContent() {
               </div>
             </TableToolbar.Row>
             <TableToolbar.Row justify="start">
-              <div className="grid w-full grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
-                <DatePickerField
-                  value={fromDate}
-                  onChange={(value) => {
-                    setFromDate(value);
-                    setPage(1);
-                  }}
-                  tone="light"
-                  containerClassName="mb-0"
-                  contentClassName="z-[1500]"
-                />
-                <DatePickerField
-                  value={toDate}
-                  onChange={(value) => {
-                    setToDate(value);
-                    setPage(1);
-                  }}
-                  tone="light"
-                  containerClassName="mb-0"
-                  contentClassName="z-[1500]"
-                />
-                <InputField
+              <div className="grid w-full grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+               
+              <InputField
+                  startIcon={<SearchIcon />}
                   id="admin-journal-number"
                   value={number}
                   onChange={(event) => {
@@ -458,18 +437,19 @@ export function AdminJournalsContent() {
                   containerClassName="mb-0"
                   className="min-h-10"
                 />
-                <SelectField
-                  value={status}
-                  onValueChange={(value) => {
-                    setStatus(value as JournalStatus | "all");
+               <DatePickerField
+                  value={fromDate}
+                  onChange={(value) => {
+                    setFromDate(value);
                     setPage(1);
                   }}
-                  options={statusOptions}
                   tone="light"
-                  clearable={false}
-                  className="min-h-10 w-full"
+                  containerClassName="mb-0"
                   contentClassName="z-[1500]"
                 />
+               
+               
+               
                 <SelectField
                   value={sourceType}
                   onValueChange={(value) => {
@@ -482,6 +462,7 @@ export function AdminJournalsContent() {
                   className="min-h-10 w-full"
                   contentClassName="z-[1500]"
                 />
+            
                 <SelectField
                   value={currency}
                   onValueChange={(value) => {

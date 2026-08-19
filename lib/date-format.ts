@@ -140,3 +140,39 @@ export function formatAppDate(
     return toIsoDate(date);
   }
 }
+
+/** A human-readable date for documents and reports, including the month name. */
+export function formatAppLongDate(
+  value: Date | string | null | undefined,
+  calendarType: AppCalendarType,
+  language: AppLanguage = "en",
+) {
+  const date =
+    typeof value === "string"
+      ? (parseIsoDate(value) ?? new Date(value))
+      : (value ?? undefined);
+  if (!date || Number.isNaN(date.getTime())) return "-";
+
+  const locale =
+    calendarType === "hijri_shamsi"
+      ? language === "en"
+        ? "en-US-u-ca-persian-nu-latn"
+        : "fa-AF-u-ca-persian"
+      : calendarType === "hijri_qamari"
+        ? language === "en"
+          ? "en-US-u-ca-islamic-umalqura-nu-latn"
+          : "ar-SA-u-ca-islamic-umalqura"
+        : language === "en"
+          ? "en-US"
+          : "fa-AF";
+
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    }).format(date);
+  } catch {
+    return formatAppDate(value, calendarType, language);
+  }
+}
