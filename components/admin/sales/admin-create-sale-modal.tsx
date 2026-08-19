@@ -22,6 +22,7 @@ import {
 } from "@/components/common";
 import { FormModal } from "@/components/common/form-modal";
 import { InputField } from "@/components/common/input-field";
+import { ToggleSwitch } from "@/components/common/toggle-switch";
 import {
   SelectField,
   type SelectOption,
@@ -195,6 +196,7 @@ export function AdminCreateSaleModal({
             : sale.customerId,
         invoiceDate: sale.invoiceDate?.slice(0, 10) ?? getLocalDateString(),
         dueDate: sale.dueDate?.slice(0, 10) ?? "",
+        isImportant: sale.isImportant,
         currencyCode: sale.currencyCode,
         exchangeRateToBase: 1,
         revenueAccountId: "",
@@ -613,6 +615,20 @@ export function AdminCreateSaleModal({
         if (!submitting) onClose();
       }}
       onSubmit={() => void submit()}
+      footerContent={
+        <Controller
+          control={form.control}
+          name="isImportant"
+          render={({ field }) => (
+            <ToggleSwitch
+              id="sale-is-important"
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              label={t("admin.sales.form.important")}
+            />
+          )}
+        />
+      }
       panelClassName="!max-h-[92vh] max-w-[min(96vw,78rem)]"
       contentClassName="gap-1 !flex flex-col"
     >

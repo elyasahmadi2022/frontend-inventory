@@ -46,6 +46,7 @@ export type SaleRow = {
   customerId: string;
   invoiceDate: string;
   dueDate?: string | null;
+  isImportant: boolean;
   status: SaleStatus;
   currencyCode: CurrencyCode;
   subtotal: number | string;
@@ -98,6 +99,7 @@ export type SaveSaleInput = {
   customerId?: string;
   invoiceDate: string;
   dueDate?: string;
+  isImportant: boolean;
   currencyCode: CurrencyCode;
   exchangeRateToBase?: number;
   productCurrencyCode?: CurrencyCode;
@@ -197,6 +199,7 @@ export type SalePaymentInput = {
   receiptAccountId?: string;
   paymentDate?: string;
   notes?: string;
+  paymentExchangeRate?: number;
 };
 
 export type SaleReturnLineInput = {

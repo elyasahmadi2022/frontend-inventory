@@ -26,6 +26,7 @@ export function createAdminSaleSchema(t: T) {
         .trim()
         .min(1, t("admin.sales.validation.invoiceDateRequired")),
       dueDate: optionalText,
+      isImportant: z.boolean().default(false),
       currencyCode: z.enum(["AFN", "USD", "PKR"]),
       exchangeRateToBase: positiveNumber(t).default(1),
       revenueAccountId: optionalText,
@@ -81,6 +82,7 @@ export const adminSaleDefaultValues: AdminSaleFormValues = {
   customerId: "",
   invoiceDate: getLocalDateString(),
   dueDate: "",
+  isImportant: false,
   currencyCode: "AFN",
   exchangeRateToBase: 1,
   revenueAccountId: "",

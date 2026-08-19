@@ -7,6 +7,7 @@ type ToggleSwitchProps = {
   onCheckedChange: (checked: boolean) => void;
   id: string;
   label?: string;
+  labelClassName?: string;
   "aria-label"?: string;
   disabled?: boolean;
 };
@@ -16,6 +17,7 @@ export function ToggleSwitch({
   onCheckedChange,
   id,
   label,
+  labelClassName,
   "aria-label": ariaLabel,
   disabled = false,
 }: ToggleSwitchProps) {
@@ -39,7 +41,7 @@ export function ToggleSwitch({
       {label ? (
         <label
           htmlFor={id}
-          className="cursor-pointer text-start text-sm font-medium text-light-text dark:text-dark-text"
+          className={`cursor-pointer text-start text-sm font-medium text-light-text dark:text-dark-text ${labelClassName ?? ""}`}
         >
           {label}
         </label>

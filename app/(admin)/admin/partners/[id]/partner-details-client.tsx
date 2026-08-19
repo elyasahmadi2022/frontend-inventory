@@ -22,9 +22,11 @@ import {
 } from "@/components/admin/admin-detail-layout";
 import { AdminKpiCard } from "@/components/admin/dashboard/dashboard-panel";
 import { AdminPurchasePaymentModal } from "@/components/admin/purchases/admin-purchase-payment-modal";
+import { AdminJournalEntryModal } from "@/components/admin/journals/admin-journal-entry-modal";
 import { AdminSalePaymentModal } from "@/components/admin/sales/admin-sale-payment-modal";
 import DataTableEmptyState from "@/components/common/data-table-empty-state";
 import { InputField } from "@/components/common/input-field";
+import { SelectField } from "@/components/common/select-field";
 import StatusPill from "@/components/common/status-pill";
 import Table from "@/components/common/table";
 import TableBody from "@/components/common/table-body";
@@ -309,10 +311,17 @@ export function AdminPartnerDetailsContent({
   const { t } = useI18n();
   const [salePaymentOpen, setSalePaymentOpen] = useState(false);
   const [purchasePaymentOpen, setPurchasePaymentOpen] = useState(false);
+  const [journalPaymentOpen, setJournalPaymentOpen] = useState(false);
+  const [journalPaymentType, setJournalPaymentType] = useState<
+    "customer" | "vendor"
+  >("customer");
   const [transactionHistoryOpen, setTransactionHistoryOpen] = useState(
     !collapsibleTransactionHistory,
   );
   const [activitySearch, setActivitySearch] = useState("");
+  const [activityPaymentStatus, setActivityPaymentStatus] = useState<
+    "all" | "paid" | "unpaid" | "partial"
+  >("all");
   const searchParams = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   const contextBackHref =
@@ -417,9 +426,19 @@ export function AdminPartnerDetailsContent({
   ].sort((a, b) => parseDate(b.date) - parseDate(a.date));
   const filteredTradeRows = useMemo(() => {
     const query = activitySearch.trim().toLocaleLowerCase();
-    if (!query) return tradeRows;
-    return tradeRows.filter((row) =>
-      [
+    return tradeRows.filter((row) => {
+      const total = Number(row.total);
+      const paid = Number(row.paidTotal);
+      const paymentStatus =
+        paid >= total ? "paid" : paid <= 0 ? "unpaid" : "partial";
+      if (
+        activityPaymentStatus !== "all" &&
+        paymentStatus !== activityPaymentStatus
+      ) {
+        return false;
+      }
+      if (!query) return true;
+      return [
         row.number,
         row.products,
         row.description,
@@ -434,9 +453,9 @@ export function AdminPartnerDetailsContent({
       ]
         .join(" ")
         .toLocaleLowerCase()
-        .includes(query),
-    );
-  }, [activitySearch, t, tradeRows]);
+        .includes(query);
+    });
+  }, [activityPaymentStatus, activitySearch, t, tradeRows]);
   const journals = journalsQuery.data?.items ?? [];
   const outstandingSale = sales.find(
     (sale) =>
@@ -448,23 +467,39 @@ export function AdminPartnerDetailsContent({
       purchase.status !== "cancelled" &&
       Number(purchase.total) - Number(purchase.paidTotal) > 0,
   );
+  const isCustomer = partner?.type === "customer" || partner?.type === "both";
+  const isVendor = partner?.type === "vendor" || partner?.type === "both";
   const partnerPaymentActions = (
     <>
-      {outstandingSale ? (
+      {isCustomer ? (
         <button
           title={t("admin.sales.action.receivePayment")}
           type="button"
-          onClick={() => setSalePaymentOpen(true)}
+          onClick={() => {
+            if (outstandingSale) {
+              setSalePaymentOpen(true);
+              return;
+            }
+            setJournalPaymentType("customer");
+            setJournalPaymentOpen(true);
+          }}
           className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
         >
           <Banknote className="size-4" />
           {t("admin.sales.action.receivePayment")}
         </button>
       ) : null}
-      {outstandingPurchase ? (
+      {isVendor ? (
         <button
           type="button"
-          onClick={() => setPurchasePaymentOpen(true)}
+          onClick={() => {
+            if (outstandingPurchase) {
+              setPurchasePaymentOpen(true);
+              return;
+            }
+            setJournalPaymentType("vendor");
+            setJournalPaymentOpen(true);
+          }}
           className="btn-primary inline-flex min-h-9 items-center gap-2 px-3 text-xs"
         >
           <Banknote className="size-4" />
@@ -473,8 +508,6 @@ export function AdminPartnerDetailsContent({
       ) : null}
     </>
   );
-  const isCustomer = partner?.type === "customer" || partner?.type === "both";
-  const isVendor = partner?.type === "vendor" || partner?.type === "both";
   const summaryCards = [
     ...(isCustomer
       ? [
@@ -538,6 +571,12 @@ export function AdminPartnerDetailsContent({
         purchases={purchases}
         onClose={() => setPurchasePaymentOpen(false)}
       />
+      <AdminJournalEntryModal
+        open={journalPaymentOpen}
+        initialPartnerId={partnerId}
+        initialPartnerType={journalPaymentType}
+        onClose={() => setJournalPaymentOpen(false)}
+      />
       
       <AdminDetailToolbar
         backHref={backHref}
@@ -568,19 +607,37 @@ export function AdminPartnerDetailsContent({
         title={t("admin.partners.details.recentActivity")}
         description={t("admin.partners.details.recentActivityDescription")}
       >
-        <InputField
-          value={activitySearch}
-          onChange={(event) => setActivitySearch(event.target.value)}
-          placeholder={t("admin.partners.details.activitySearchPlaceholder")}
-          startIcon={<Search className="size-4" />}
-          tone="light"
-          containerClassName="mb-3 max-w-xl"
-        />
+        <div className="mb-3 grid gap-3 md:grid-cols-2">
+          <InputField
+            value={activitySearch}
+            onChange={(event) => setActivitySearch(event.target.value)}
+            placeholder={t("admin.partners.details.activitySearchPlaceholder")}
+            startIcon={<Search className="size-4" />}
+            tone="light"
+          />
+          <SelectField
+            options={[
+              { value: "all", label: t("admin.partners.action.allPayment") },
+              { value: "paid", label: t("admin.partners.action.paid") },
+              { value: "unpaid", label: t("admin.partners.action.unpaid") },
+              { value: "partial", label: t("admin.partners.action.partial") },
+            ]}
+            value={activityPaymentStatus}
+            onValueChange={(value) =>
+              setActivityPaymentStatus(
+                value as "all" | "paid" | "unpaid" | "partial",
+              )
+            }
+            tone="light"
+            clearable={false}
+          />
+        </div>
         <Table>
           <TableHeader
             headerData={[
               { title: t("admin.partners.details.activityType") },
               { title: t("admin.partners.details.activityDocument") },
+              { title: "Description" },
               { title: t("admin.reports.column.date") },
               {
                 title: t("admin.reports.column.totalAmount"),
@@ -599,7 +656,7 @@ export function AdminPartnerDetailsContent({
           <TableBody>
             {filteredTradeRows.length === 0 ? (
               <DataTableEmptyState
-                colSpan={6}
+                colSpan={7}
                 title={t("admin.partners.details.emptyActivity")}
               />
             ) : (
@@ -622,10 +679,17 @@ export function AdminPartnerDetailsContent({
                     >
                       {row.number}
                     </Link>
-                    <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
-                      {row.products || "-"}
+                  </TableColumn>
+                  <TableColumn nowrap={false}>
+                    <p className="font-medium">
+                      {row.kind === "sale"
+                        ? t("admin.partners.details.activitySale")
+                        : t("admin.partners.details.activityPurchase")}
                     </p>
-                    {row.description ? (
+                    <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
+                      {row.products || row.description || "-"}
+                    </p>
+                    {row.products && row.description ? (
                       <p className="mt-1 text-xs text-light-muted dark:text-dark-muted">
                         {row.description}
                       </p>
